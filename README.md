@@ -23,6 +23,6 @@ pip install -r requirements.txt
 ### Step 3: Generate all plots
 
 ```
-python py_files/syn_data.py
+python py_files/regression.py
 
 ```

@@ -1,8 +1,5 @@
 numpy
-sklearn
+scikit-learn
 scipy
-concurrent
-time
 pandas
-functools
 matplotlib
