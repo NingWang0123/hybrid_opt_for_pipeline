@@ -11,6 +11,7 @@ import matplotlib
 # real-world dataset
 from sklearn.datasets import load_diabetes
 from sklearn.model_selection import train_test_split
+from statsmodels.tsa.ar_model import AutoReg
 
 
 
@@ -458,6 +459,7 @@ def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
 
 
 
+
 def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6):
    """
    Standard SGD implementation without bounds.
@@ -475,6 +477,52 @@ def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1
   
    return x, f(x, X, y)
 
+'''
+def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6, batch_size=None):
+    """
+    标准SGD带随机小批量采样（如果batch_size=None就是全数据Batch GD）
+    
+    参数：
+    - f: 目标函数
+    - grad_f: 目标函数的梯度（注意这里应该是可以处理小批量数据的）
+    - X, y: 输入数据和标签
+    - max_iterations: 最大迭代步数
+    - learning_rate: 学习率
+    - tol: 收敛判定阈值
+    - batch_size: 小批量大小（None表示全量批量）
+    """
+    n_samples = X.shape[0]
+    n_features = X.shape[1]
+    
+    # 初始化参数（随机）
+    x = np.random.randn(n_features + 6)
+    
+    for i in range(max_iterations):
+        if batch_size is None or batch_size >= n_samples:
+            # 用全量数据
+            X_batch = X
+            y_batch = y
+        else:
+            # 随机采样一小批
+            idx = np.random.choice(n_samples, batch_size, replace=False)
+            X_batch = X.iloc[idx] if isinstance(X, pd.DataFrame) else X[idx]
+            y_batch = y.iloc[idx] if isinstance(y, pd.Series) else y[idx]
+        
+        # 计算梯度（基于小批量）
+        gradient = grad_f(x, X_batch, y_batch)
+        
+        # 参数更新
+        x_new = x - learning_rate * gradient
+        
+        # 收敛判断
+        if np.linalg.norm(x_new - x) < tol:
+            break
+        
+        x = x_new
+    
+    # 返回最终参数 和 损失值（在全数据上评估）
+    return x, f(x, X, y)
+'''
 
 
 
@@ -862,9 +910,154 @@ def example_usage():
    plot_optimization_results(results, None)
 
 
+def run_multiple_sgds_and_collect_points_and_signs(f, grad_f, X, y, num_models=10, steps_per_model=100, learning_rate=0.01, param_dim=None, low=-1.0, high=1.0):
+    """
+    Run multiple SGD trajectories, collecting both parameter vectors and their sign vectors.
+
+    Args:
+    - f: Objective function
+    - grad_f: Gradient function
+    - X, y: Dataset
+    - num_models: Number of SGD initializations
+    - steps_per_model: Number of steps per SGD
+    - learning_rate: Learning rate for SGD
+    - param_dim: Dimension of parameter vector
+    - low, high: Range for uniform initialization
+
+    Returns:
+    - all_points_array: shape=(num_models * steps_per_model, param_dim), collected parameter vectors
+    - all_signs_array: shape=(num_models * steps_per_model, param_dim), corresponding sign vectors
+    """
+    if param_dim is None:
+        n_features = X.shape[1]
+        param_dim = n_features + 6  # Number of parameters in the pipeline
+
+    all_points = []  # Store raw parameter vectors
+    all_signs = []   # Store corresponding sign vectors
+
+    for model_idx in range(num_models):
+        # Uniform random initialization
+        x = np.random.uniform(low=low, high=high, size=param_dim)
+
+        for step in range(steps_per_model):
+            gradient = grad_f(x, X, y)  # Compute the gradient
+            x_new = x - learning_rate * gradient  # SGD update
+
+            all_points.append(x_new.copy())  # Save the updated parameter vector
+            all_signs.append(np.sign(x_new))  # Save the sign vector
+
+            x = x_new  # Move to the new point
+
+    all_points_array = np.array(all_points)
+    all_signs_array = np.array(all_signs)
+
+    return all_points_array, all_signs_array
+
+
+def extrapolate_with_ar(all_points_array, extrapolate_steps=5000, lags=5):
+    """
+    Use an AR model to extrapolate from existing points and extend exploration coverage.
+
+    Args:
+    - all_points_array: shape=(n_samples, param_dim), input parameter vectors
+    - extrapolate_steps: Number of future points to generate
+    - lags: Number of lags to use in AR modeling
+
+    Returns:
+    - extrapolated_points: shape=(extrapolate_steps, param_dim), generated future points
+    """
+    n_samples, n_dims = all_points_array.shape
+
+    extrapolated_points = np.zeros((extrapolate_steps, n_dims))
+
+    for dim in range(n_dims):
+        # Extract time series for each dimension
+        series = all_points_array[:, dim]
+
+        try:
+            model = AutoReg(series, lags=lags, old_names=False)
+            model_fit = model.fit()
+
+            # Predict future points
+            preds = model_fit.predict(start=n_samples, end=n_samples + extrapolate_steps - 1)
+
+            extrapolated_points[:, dim] = preds
+
+        except Exception as e:
+            print(f"Failed to fit AR model for dimension {dim}: {e}")
+            # If fitting fails, extend using the last known value
+            extrapolated_points[:, dim] = series[-1]
+
+    return extrapolated_points
+
+
+def evaluate_sign_prediction_with_groundtruth(f, grad_f, X, y, future_points, future_signs):
+    """
+    Recompute true gradient signs at future points and compare with predicted signs to evaluate accuracy.
+
+    Args:
+    - f: Objective function
+    - grad_f: Gradient function
+    - X, y: Training dataset
+    - future_points: Extrapolated parameter vectors
+    - future_signs: Predicted sign vectors
+
+    Returns:
+    - accuracy: Scalar value representing overall prediction accuracy
+    """
+    n_points = future_points.shape[0]
+    n_dims = future_points.shape[1]
+
+    true_signs = np.zeros_like(future_signs)
+
+    for i in range(n_points):
+        gradient = grad_f(future_points[i], X, y)  # Compute true gradient
+        true_sign = np.sign(gradient)  # Take the sign
+        true_signs[i] = true_sign
+
+    correct = (true_signs == future_signs).astype(int)  # Element-wise comparison
+
+    accuracy = correct.mean()
+
+    return accuracy
+
+
+def test_usage():
+    """
+    Full test: 
+    - Run multiple SGD paths
+    - Extrapolate points with AR models
+    - Evaluate sign prediction accuracy against true gradients
+    """
+
+    # Collect SGD exploration points and their signs
+    original_points, signs = run_multiple_sgds_and_collect_points_and_signs(
+        pipeline_with_soft_parameters,
+        pipeline_gradient,
+        X_train, y_train,
+        num_models=10,
+        steps_per_model=100,
+        learning_rate=0.01
+    )
+
+    # Extrapolate future points
+    future_points = extrapolate_with_ar(original_points, extrapolate_steps=1000, lags=5)
+    future_signs = np.sign(future_points)
+
+    # Evaluate accuracy of extrapolated signs
+    accuracy = evaluate_sign_prediction_with_groundtruth(
+        pipeline_with_soft_parameters,
+        pipeline_gradient,
+        X_train, y_train,
+        future_points,
+        future_signs
+    )
+
+    print(f"Accuracy: {accuracy*100:.2f}%")
+
 
 
 if __name__ == "__main__":
-   example_usage()
-
+    #example_usage()
+    test_usage()
 # python py_files/regression.py
