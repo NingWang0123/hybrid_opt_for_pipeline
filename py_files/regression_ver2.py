@@ -527,7 +527,7 @@ def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
 
 
 
-<<<<<<< HEAD
+
 # def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6):
 #    """
 #    Standard SGD implementation without bounds.
@@ -535,25 +535,24 @@ def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
 #    n_features = X.shape[1]
 #    # Random initialization
 #    x = np.random.randn(n_features + 6)
-=======
 
-def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6):
-   """
-   Standard SGD implementation without bounds.
-   """
-   n_features = X.shape[1]
-   # Random initialization
-   x = np.random.randn(n_features + 6)
->>>>>>> ee90d84638da4494ca180a277b28545b55e6aa6b
+
+# def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6):
+#    """
+#    Standard SGD implementation without bounds.
+#    """
+#    n_features = X.shape[1]
+#    # Random initialization
+#    x = np.random.randn(n_features + 6)
   
-#    for i in range(max_iterations):
-#        gradient = grad_f(x, X, y)
-#        x_new = x - learning_rate * gradient
-#        if np.linalg.norm(x_new - x) < tol:
-#            break
-#        x = x_new
+# #    for i in range(max_iterations):
+# #        gradient = grad_f(x, X, y)
+# #        x_new = x - learning_rate * gradient
+# #        if np.linalg.norm(x_new - x) < tol:
+# #            break
+# #        x = x_new
   
-#    return x, f(x, X, y)
+# #    return x, f(x, X, y)
 
 
 def standard_sgd(f, grad_f, X, y,
@@ -1744,8 +1743,7 @@ def interpret_parameters(params, feature_names=None):
     return interpretation
 
 # python py_files/regression.py
-=======
     #example_usage()
-    test_usage()
+
 # python py_files/regression.py
->>>>>>> ee90d84638da4494ca180a277b28545b55e6aa6b
+
