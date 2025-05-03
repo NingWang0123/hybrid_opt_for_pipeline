@@ -278,6 +278,7 @@ def process_point_with_no_zoom_in(f, grad_f, hessian_f, global_search, pt, X, y,
 #    return all_points[best_idx], all_results[best_idx]
 
 
+# parallel computing
 executor = ProcessPoolExecutor()
 
 def sgd_opt_global_search(start_intervals, end_intervals, n, f, grad_f, hessian_f, global_search,
@@ -526,17 +527,6 @@ def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
 
 
 
-
-
-# def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6):
-#    """
-#    Standard SGD implementation without bounds.
-#    """
-#    n_features = X.shape[1]
-#    # Random initialization
-#    x = np.random.randn(n_features + 6)
-
-
 # def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6):
 #    """
 #    Standard SGD implementation without bounds.
@@ -588,54 +578,6 @@ def standard_sgd(f, grad_f, X, y,
         x = x_new
 
     return x, f(x, X, y)
-
-
-'''
-def standard_sgd(f, grad_f, X, y, max_iterations=1000, learning_rate=0.01, tol=1e-6, batch_size=None):
-    """
-    标准SGD带随机小批量采样（如果batch_size=None就是全数据Batch GD）
-    
-    参数：
-    - f: 目标函数
-    - grad_f: 目标函数的梯度（注意这里应该是可以处理小批量数据的）
-    - X, y: 输入数据和标签
-    - max_iterations: 最大迭代步数
-    - learning_rate: 学习率
-    - tol: 收敛判定阈值
-    - batch_size: 小批量大小（None表示全量批量）
-    """
-    n_samples = X.shape[0]
-    n_features = X.shape[1]
-    
-    # 初始化参数（随机）
-    x = np.random.randn(n_features + 6)
-    
-    for i in range(max_iterations):
-        if batch_size is None or batch_size >= n_samples:
-            # 用全量数据
-            X_batch = X
-            y_batch = y
-        else:
-            # 随机采样一小批
-            idx = np.random.choice(n_samples, batch_size, replace=False)
-            X_batch = X.iloc[idx] if isinstance(X, pd.DataFrame) else X[idx]
-            y_batch = y.iloc[idx] if isinstance(y, pd.Series) else y[idx]
-        
-        # 计算梯度（基于小批量）
-        gradient = grad_f(x, X_batch, y_batch)
-        
-        # 参数更新
-        x_new = x - learning_rate * gradient
-        
-        # 收敛判断
-        if np.linalg.norm(x_new - x) < tol:
-            break
-        
-        x = x_new
-    
-    # 返回最终参数 和 损失值（在全数据上评估）
-    return x, f(x, X, y)
-'''
 
 
 
@@ -1171,7 +1113,6 @@ def test_usage():
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
    example_usage()
 
 
@@ -1660,7 +1601,7 @@ def pipeline_objective(params, X_raw, y):
     
     return nonconvex_f(regression_params, X_final, y)
 
-def pipeline_gradient(params, X_raw, y, epsilon=1e-6):
+def pipeline_gradient_new(params, X_raw, y, epsilon=1e-6):
     """
     Compute numerical gradient for the pipeline parameters.
     Uses central difference approximation.
@@ -1693,7 +1634,7 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
     # Run the optimization
     best_params, best_loss = predictive_sgd_optimization(
         f=pipeline_objective,
-        grad_f=pipeline_gradient,
+        grad_f=pipeline_gradient_new,
         X=X_train,
         y=y_train,
         n_points=n_points,
@@ -1710,40 +1651,8 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
     
     return best_params, best_loss, interpretation
 
-def interpret_parameters(params, feature_names=None):
-    """
-    Interpret the optimized parameters.
-    """
-    def softmax(x):
-        e_x = np.exp(x - np.max(x))
-        return e_x / e_x.sum()
-    
-    impute_weights = softmax(params[0:3])
-    scale_weights = softmax(params[3:6])
-    regression_params = params[6:]
-    
-    impute_methods = ['mean', 'median', 'knn']
-    scale_methods = ['standard', 'minmax', 'maxabs']
-    
-    interpretation = {
-        'imputation': {method: weight for method, weight in zip(impute_methods, impute_weights)},
-        'scaling': {method: weight for method, weight in zip(scale_methods, scale_weights)},
-        'regression': {}
-    }
-    
-    if feature_names is not None:
-        interpretation['regression'] = {
-            name: coef for name, coef in zip(feature_names, regression_params)
-        }
-    else:
-        interpretation['regression'] = {
-            f'feature_{i}': coef for i, coef in enumerate(regression_params)
-        }
-    
-    return interpretation
 
 # python py_files/regression.py
     #example_usage()
 
 # python py_files/regression.py
-
