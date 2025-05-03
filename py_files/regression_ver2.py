@@ -851,120 +851,6 @@ def plot_optimization_results(results, true_beta=None):
 
 
 
-
-# ==================== Complete Example Usage ====================
-
-
-
-
-def example_usage():
-   """
-   Example demonstrating how to use the full pipeline optimization.
-   """
-   import time
-  
-   # Generate synthetic data with missing values
-   np.random.seed(42)
-
-
-   X_df = X_train
-
-   y = y_train
-
-   n_features = 3 
-
-
-  
-   sgd_max_iterations = 1000
-
-   
-   methods = {
-       "Our Approach": lambda: optimize_full_pipeline(
-           X_df, y, max_iterations=sgd_max_iterations
-       ),
-       "Standard SGD": lambda: standard_sgd(
-           pipeline_with_soft_parameters, pipeline_gradient,
-           X_df, y, max_iterations=sgd_max_iterations
-       ),
-       "SGD with Bound": lambda: sgd_with_bound(
-           pipeline_with_soft_parameters, pipeline_gradient,
-           np.random.randn(n_features + 6), np.ones(n_features + 6) * np.inf,
-           X_df, y, iterations=sgd_max_iterations
-       ),
-       "Differential Evolution": lambda: de_only_search(
-           pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
-       )
-   }
-  
-   results = {}
-   for method_name, method_func in methods.items():
-       print(f"\nRunning {method_name}...")
-       start_time = time.time()
-       try:
-           optimal_params, min_value = method_func()
-           end_time = time.time()
-           results[method_name] = {
-               "success": True,
-               "time": end_time - start_time,
-               "loss": min_value,
-               "params": optimal_params
-           }
-           print(f"  - Success: Loss = {min_value:.6f}, Time = {end_time - start_time:.2f} seconds")
-       except Exception as e:
-           end_time = time.time()
-           results[method_name] = {
-               "success": False,
-               "time": end_time - start_time,
-               "error": str(e)
-           }
-           print(f"  - Failed: {str(e)}")
-           print(f"  - Time elapsed: {end_time - start_time:.2f} seconds")
-  
-   # Print comparison table
-   print("\n" + "="*50)
-   print("OPTIMIZATION METHODS COMPARISON")
-   print("="*50)
-   print(f"{'Method':<25} {'Loss':<15} {'Time (s)':<15} {'Status':<10}")
-   print("-"*65)
-  
-   for method, result in results.items():
-       if result["success"]:
-           print(f"{method:<25} {result['loss']:<15.6f} {result['time']:<15.2f} {'Success':<10}")
-       else:
-           print(f"{method:<25} {'N/A':<15} {result['time']:<15.2f} {'Failed':<10}")
-  
-   # Print detailed parameters for the best method
-   best_method = min(
-       [m for m, r in results.items() if r["success"]],
-       key=lambda m: results[m]["loss"],
-       default=None
-   )
-  
-   if best_method:
-       print("\n" + "="*50)
-       print(f"BEST METHOD: {best_method}")
-       print("="*50)
-       best_params = results[best_method]["params"]
-       interpretation = interpret_parameters(best_params, X_df.columns)
-      
-       print("\nOptimized Parameters:")
-       print("Imputation weights:")
-       for method, weight in interpretation['imputation'].items():
-           print(f"  - {method}: {weight:.4f}")
-      
-       print("\nScaling weights:")
-       for method, weight in interpretation['scaling'].items():
-           print(f"  - {method}: {weight:.4f}")
-      
-       print("\nRegression coefficients:")
-       for feature, coef in interpretation['regression'].items():
-           print(f"  - {feature}: {coef:.4f}")
-      
-  
-   # Generate visualization
-   plot_optimization_results(results, None)
-
-
 def run_multiple_sgds_and_collect_points_and_signs(f, grad_f, X, y, num_models=10, steps_per_model=100, learning_rate=0.01, param_dim=None, low=-1.0, high=1.0):
     """
     Run multiple SGD trajectories, collecting both parameter vectors and their sign vectors.
@@ -1109,11 +995,6 @@ def test_usage():
     )
 
     print(f"Accuracy: {accuracy*100:.2f}%")
-
-
-
-if __name__ == "__main__":
-   example_usage()
 
 
 ###################### predictive SGD
@@ -1652,7 +1533,131 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
     return best_params, best_loss, interpretation
 
 
-# python py_files/regression.py
-    #example_usage()
+
+
+
+# ==================== Complete Example Usage ====================
+
+
+
+def example_usage():
+    """
+    Example demonstrating how to use the full pipeline optimization.
+    """
+    import time
+    import numpy as np
+
+    # Generate synthetic data with missing values
+    np.random.seed(42)
+
+    X_df = X_train
+    y = y_train
+    n_features = 3
+
+    sgd_max_iterations = 1000
+
+    methods = {
+        "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd(
+            X_df, y, n_points=5, max_steps=50, use_arma=True
+        ),
+        "Our Approach (v1)": lambda: optimize_full_pipeline(
+            X_df, y, max_iterations=sgd_max_iterations
+        ),
+        "Standard SGD": lambda: standard_sgd(
+            pipeline_with_soft_parameters, pipeline_gradient,
+            X_df, y, max_iterations=sgd_max_iterations
+        ),
+        "SGD with Bound": lambda: sgd_with_bound(
+            pipeline_with_soft_parameters, pipeline_gradient,
+            np.random.randn(n_features + 6), np.ones(n_features + 6) * np.inf,
+            X_df, y, iterations=sgd_max_iterations
+        ),
+        "Differential Evolution": lambda: de_only_search(
+            pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
+        )
+    }
+
+    results = {}
+    for method_name, method_func in methods.items():
+        print(f"\nRunning {method_name}...")
+        start_time = time.time()
+        try:
+            output = method_func()
+            if method_name == "Our Approach (v2)":
+                optimal_params, min_value, interpretation = output
+            else:
+                optimal_params, min_value = output
+                interpretation = None
+            end_time = time.time()
+            results[method_name] = {
+                "success": True,
+                "time": end_time - start_time,
+                "loss": min_value,
+                "params": optimal_params,
+                "interpretation": interpretation 
+            }
+            print(f"  - Success: Loss = {min_value:.6f}, Time = {end_time - start_time:.2f} seconds")
+        except Exception as e:
+            end_time = time.time()
+            results[method_name] = {
+                "success": False,
+                "time": end_time - start_time,
+                "error": str(e)
+            }
+            print(f"  - Failed: {str(e)}")
+            print(f"  - Time elapsed: {end_time - start_time:.2f} seconds")
+
+    # Print comparison table
+    print("\n" + "="*50)
+    print("OPTIMIZATION METHODS COMPARISON")
+    print("="*50)
+    print(f"{'Method':<25} {'Loss':<15} {'Time (s)':<15} {'Status':<10}")
+    print("-"*65)
+
+    for method, result in results.items():
+        if result["success"]:
+            print(f"{method:<25} {result['loss']:<15.6f} {result['time']:<15.2f} {'Success':<10}")
+        else:
+            print(f"{method:<25} {'N/A':<15} {result['time']:<15.2f} {'Failed':<10}")
+
+    # Print detailed parameters for the best method
+    best_method = min(
+        [m for m, r in results.items() if r["success"]],
+        key=lambda m: results[m]["loss"],
+        default=None
+    )
+
+    if best_method:
+        print("\n" + "="*50)
+        print(f"BEST METHOD: {best_method}")
+        print("="*50)
+        best_result = results[best_method]
+        best_params = best_result["params"]
+        
+        if best_result["interpretation"] is not None:
+            interpretation = best_result["interpretation"]
+        else:
+            interpretation = interpret_parameters(best_params, X_df.columns)
+
+        print("\nOptimized Parameters:")
+        print("Imputation weights:")
+        for method, weight in interpretation['imputation'].items():
+            print(f"  - {method}: {weight:.4f}")
+
+        print("\nScaling weights:")
+        for method, weight in interpretation['scaling'].items():
+            print(f"  - {method}: {weight:.4f}")
+
+        print("\nRegression coefficients:")
+        for feature, coef in interpretation['regression'].items():
+            print(f"  - {feature}: {coef:.4f}")
+
+    # Generate visualization
+    plot_optimization_results(results, None)
+
+
+
+if __name__ == "__main__":
+   example_usage()
 
 # python py_files/regression.py
