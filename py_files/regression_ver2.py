@@ -108,38 +108,6 @@ def sgd_with_bound(f, grad_f, start_point, end_point, X, y,
                    tol=1e-6, batch_size=None, random_state=None):
     """
     Simple SGD optimizer with a bound check and optional mini-batches.
-
-    Parameters
-    ----------
-    f : callable
-        The loss/objective function, f(x, X, y).
-    grad_f : callable
-        The gradient function, grad_f(x, X_batch, y_batch).
-    start_point : array-like
-        Initial guess for x.
-    end_point : array-like
-        Lower-bound for x; if all x_new >= end_point, stops.
-    X : array-like, shape (n_samples, n_features)
-        Feature matrix.
-    y : array-like, shape (n_samples,)
-        Target vector.
-    learning_rate : float, default=0.01
-        Step size multiplier.
-    iterations : int, default=1000
-        Maximum number of SGD steps.
-    tol : float, default=1e-6
-        Convergence tolerance on ‖x_new – x‖.
-    batch_size : int or None, default=None
-        Number of samples per mini-batch. If None or ≥ n_samples, uses full batch.
-    random_state : int or None
-        Seed for reproducible mini-batch sampling.
-
-    Returns
-    -------
-    x : ndarray
-        The converged parameters.
-    loss : float
-        Final loss evaluated on the full dataset.
     """
     rng = np.random.default_rng(random_state)
     x = np.array(start_point, dtype=float)
@@ -152,7 +120,15 @@ def sgd_with_bound(f, grad_f, start_point, end_point, X, y,
             X_batch, y_batch = X, y
         else:
             idx = rng.choice(n_samples, size=batch_size, replace=False)
-            X_batch, y_batch = X[idx], y[idx]
+            if isinstance(X, (pd.DataFrame, pd.Series)):
+                X_batch = X.iloc[idx]
+            else:
+                X_batch = X[idx]
+            
+            if isinstance(y, (pd.DataFrame, pd.Series)):
+                y_batch = y.iloc[idx]
+            else:
+                y_batch = y[idx]
 
         # Compute gradient and take step
         gradient = grad_f(x, X_batch, y_batch)
@@ -218,9 +194,8 @@ def generate_uniform_start_end_pairs(start_point, end_point, n):
 
 
 
-
 def process_point_with_no_zoom_in(f, grad_f, hessian_f, global_search, pt, X, y,
-                                 learning_rate=0.01, iterations=1000, tol=1e-6):
+                                 learning_rate=0.01, iterations=1000, tol=1e-6, batch_size=32):
    """
    Processes a single pair of start and end points with SGD and,
    if necessary, applies a global search when the Hessian is non-convex.
@@ -228,7 +203,7 @@ def process_point_with_no_zoom_in(f, grad_f, hessian_f, global_search, pt, X, y,
    points = []
    results = []
    start, end = pt
-   point, result = sgd_with_bound(f, grad_f, start, end, X, y, learning_rate, iterations, tol)
+   point, result = sgd_with_bound(f, grad_f, start, end, X, y, learning_rate, iterations, tol, batch_size=batch_size)
    H = hessian_f(point, X, y)
    eigenvalues = np.linalg.eigvalsh(H)
    is_convex = np.all(eigenvalues >= 0)
@@ -282,12 +257,12 @@ def process_point_with_no_zoom_in(f, grad_f, hessian_f, global_search, pt, X, y,
 executor = ProcessPoolExecutor()
 
 def sgd_opt_global_search(start_intervals, end_intervals, n, f, grad_f, hessian_f, global_search,
-                          X, y, learning_rate=0.01, max_iterations=1000, tol=1e-6):
+                          X, y, learning_rate=0.01, max_iterations=1000, tol=1e-6, batch_size=32):
     iters = int(max_iterations / n)
     points_lst = generate_uniform_start_end_pairs(start_intervals, end_intervals, n)
     futures = [executor.submit(
         process_point_with_no_zoom_in, f, grad_f, hessian_f,
-        global_search, pt, X, y, learning_rate, iters, tol) for pt in points_lst]
+        global_search, pt, X, y, learning_rate, iters, tol, batch_size) for pt in points_lst]
     
     results = [future.result() for future in futures]
     
@@ -563,7 +538,15 @@ def standard_sgd(f, grad_f, X, y,
             X_batch, y_batch = X, y
         else:
             idx = rng.choice(n_samples, size=batch_size, replace=False)
-            X_batch, y_batch = X[idx], y[idx]
+            if isinstance(X, pd.DataFrame):
+                X_batch = X.iloc[idx]
+            else:
+                X_batch = X[idx]
+            
+            if isinstance(y, pd.Series):
+                y_batch = y.iloc[idx]
+            else:
+                y_batch = y[idx]
 
         # gradient step
         grad = grad_f(x, X_batch, y_batch)
@@ -610,7 +593,7 @@ def de_only_search(f, X, y, n_features, max_iterations=100):
 
 
 
-def optimize_full_pipeline(X_raw, y, n_features=None, max_iterations=1000):
+def optimize_full_pipeline(X_raw, y, n_features=None, max_iterations=1000, batch_size=32):
    """
    Optimize the full pipeline including imputation, scaling, and regression parameters.
   
@@ -648,7 +631,8 @@ def optimize_full_pipeline(X_raw, y, n_features=None, max_iterations=1000):
        X_raw, y,
        learning_rate=0.01,
        max_iterations=max_iterations,
-       tol=1e-6
+       tol=1e-6,
+       batch_size=batch_size
    )
   
    return best_params, min_value
@@ -1503,7 +1487,7 @@ def pipeline_gradient_new(params, X_raw, y, epsilon=1e-6):
     
     return grad
 
-def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_steps=50, use_arma=True):
+def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_steps=50, batch_size=32, use_arma=True):
     """
     Apply predictive SGD optimization to the pipeline with soft parameters.
     """
@@ -1523,7 +1507,7 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
         use_arma=use_arma,
         learning_rate=0.01,
         region_step_size=0.5,
-        batch_size=32
+        batch_size=batch_size
     )
     
     # Interpret the parameters
@@ -1557,19 +1541,19 @@ def example_usage():
 
     methods = {
         "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd(
-            X_df, y, n_points=5, max_steps=50, use_arma=True
+            X_df, y, n_points=5, max_steps=50, batch_size=32, use_arma=True
         ),
         "Our Approach (v1)": lambda: optimize_full_pipeline(
-            X_df, y, max_iterations=sgd_max_iterations
+            X_df, y, max_iterations=sgd_max_iterations, batch_size=32
         ),
         "Standard SGD": lambda: standard_sgd(
             pipeline_with_soft_parameters, pipeline_gradient,
-            X_df, y, max_iterations=sgd_max_iterations
+            X_df, y, max_iterations=sgd_max_iterations, batch_size=32
         ),
         "SGD with Bound": lambda: sgd_with_bound(
             pipeline_with_soft_parameters, pipeline_gradient,
             np.random.randn(n_features + 6), np.ones(n_features + 6) * np.inf,
-            X_df, y, iterations=sgd_max_iterations
+            X_df, y, iterations=sgd_max_iterations, batch_size=32
         ),
         "Differential Evolution": lambda: de_only_search(
             pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
