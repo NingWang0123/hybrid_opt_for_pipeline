@@ -1514,8 +1514,8 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
     
     # Run the optimization
     best_params, best_loss = predictive_sgd_optimization(
-        f=pipeline_objective,
-        grad_f=pipeline_gradient_new,
+        f=pipeline_with_soft_parameters,
+        grad_f=pipeline_gradient,
         X=X_train,
         y=y_train,
         n_points=n_points,
