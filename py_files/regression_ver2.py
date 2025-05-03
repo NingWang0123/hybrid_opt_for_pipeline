@@ -11,29 +11,87 @@ import matplotlib.pyplot as plt
 import matplotlib
 # real-world dataset
 from sklearn.datasets import load_diabetes
+from sklearn.datasets import fetch_california_housing
+from sklearn.datasets import make_regression
+from sklearn.datasets import make_friedman1
 from sklearn.model_selection import train_test_split
 from statsmodels.tsa.ar_model import AutoReg
 
 
 
-# get the datasets
-data = load_diabetes()
+def diabetes():
+    # get the datasets
+    data = load_diabetes()
 
-# Convert the features (X) into a DataFrame
-X_df = pd.DataFrame(data.data, columns=data.feature_names)
+    # Convert the features (X) into a DataFrame
+    X_df = pd.DataFrame(data.data, columns=data.feature_names)
 
-# Convert the target (y) into a DataFrame
-y_df = pd.DataFrame(data.target, columns=['Target'])
+    # Convert the target (y) into a DataFrame
+    y_df = pd.DataFrame(data.target, columns=['Target'])
 
-# Combine X and y into a single DataFrame
-diabetes_df = pd.concat([X_df, y_df], axis=1)
+    # Combine X and y into a single DataFrame
+    diabetes_df = pd.concat([X_df, y_df], axis=1)
 
-# Select only the columns 'age', 'sex', 'bmi' as X, and 'Target' as y
-X_selected = diabetes_df[['age', 'sex', 'bmi']]
-y_selected = diabetes_df['Target']
+    # Select only the columns 'age', 'sex', 'bmi' as X, and 'Target' as y
+    X_selected = diabetes_df[['age', 'sex', 'bmi']]
+    y_selected = diabetes_df['Target']
 
-X_train, X_test, y_train, y_test = train_test_split(X_selected, y_selected, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X_selected, y_selected, test_size=0.2, random_state=42)
 
+    return X_train, X_test, y_train, y_test
+
+
+
+def california_housing():
+    data = fetch_california_housing()
+
+    X_df = pd.DataFrame(data.data, columns=data.feature_names)
+    y_df = pd.DataFrame(data.target, columns=['Target'])
+    X_df = X_df.iloc[:500]
+    y_df = y_df.iloc[:500]
+
+    california_df = pd.concat([X_df, y_df], axis=1)
+
+    X_selected = california_df[['MedInc', 'AveRooms', 'AveOccup']]
+    y_selected = california_df['Target']
+
+    X_train, X_test, y_train, y_test = train_test_split(X_selected, y_selected, test_size=0.2, random_state=42)
+
+    return X_train, X_test, y_train, y_test
+
+
+
+def regression():
+    X, y = make_regression(n_samples=500, n_features=10, noise=0.1, random_state=42)
+
+    X_df = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+    y_df = pd.DataFrame(y, columns=['Target'])
+
+    regression_df = pd.concat([X_df, y_df], axis=1)
+
+    X_selected = regression_df[['feature_0', 'feature_1', 'feature_2']]
+    y_selected = regression_df['Target']
+
+    X_train, X_test, y_train, y_test = train_test_split(X_selected, y_selected, test_size=0.2, random_state=42)
+
+    return X_train, X_test, y_train, y_test
+
+
+
+def friedman1():
+    X, y = make_friedman1(n_samples=500, n_features=10, noise=0.1, random_state=42)
+
+    X_df = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(X.shape[1])])
+    y_df = pd.DataFrame(y, columns=['Target'])
+
+    friedman_df = pd.concat([X_df, y_df], axis=1)
+
+    X_selected = friedman_df[['feature_0', 'feature_1', 'feature_2']]
+    y_selected = friedman_df['Target']
+
+    X_train, X_test, y_train, y_test = train_test_split(X_selected, y_selected, test_size=0.2, random_state=42)
+
+    return X_train, X_test, y_train, y_test
 
 # ==================== Non-convex Optimization Functions ====================
 
@@ -1694,6 +1752,20 @@ def example_usage():
 
 
 if __name__ == "__main__":
-   example_usage()
+    global X_train, X_test, y_train, y_test
+
+    dataset = 'diabetes' # 'diabetes', 'california_housing', 'regression', 'friedman1'
+    if dataset == 'diabetes':
+        X_train, X_test, y_train, y_test = diabetes()
+    elif dataset == 'california_housing':
+        X_train, X_test, y_train, y_test = california_housing()
+    elif dataset == 'regression':
+        X_train, X_test, y_train, y_test = regression()
+    elif dataset == 'friedman1':
+        X_train, X_test, y_train, y_test = friedman1()
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")
+   
+    example_usage()
 
 # python py_files/regression.py
