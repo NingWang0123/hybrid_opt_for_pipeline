@@ -520,39 +520,76 @@ def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
 
 
 def standard_sgd(f, grad_f, X, y,
+                 start_point=None,
                  max_iterations=1000,
                  learning_rate=0.01,
                  tol=1e-6,
                  batch_size=None,
                  random_state=None):
-
+    """
+    Standard SGD with optional external start_point and batch sampling
+    (supports both numpy arrays and pandas DataFrames/Series).
+    
+    Parameters
+    ----------
+    f : callable
+        Objective function, f(x, X, y).
+    grad_f : callable
+        Gradient function, grad_f(x, X_batch, y_batch).
+    X : array-like or DataFrame
+        Feature matrix.
+    y : array-like or Series
+        Target vector.
+    start_point : array-like or None
+        Initial guess for x. If None, randomly initialized.
+    max_iterations : int
+        Maximum number of SGD iterations.
+    learning_rate : float
+        Step size.
+    tol : float
+        Tolerance for convergence.
+    batch_size : int or None
+        Mini-batch size. If None, use full batch.
+    random_state : int or None
+        Random seed.
+    
+    Returns
+    -------
+    x : array
+        Optimized parameters.
+    loss : float
+        Final loss value.
+    """
     rng = np.random.default_rng(random_state)
     n_samples, n_features = X.shape
 
-    # match your original init size
-    x = np.random.randn(n_features + 6)
+    # Initialize starting point
+    if start_point is not None:
+        x = np.array(start_point, dtype=float)
+    else:
+        x = np.random.randn(n_features + 6)
 
     for i in range(max_iterations):
-        # pick batch
+        # Sample batch
         if batch_size is None or batch_size >= n_samples:
             X_batch, y_batch = X, y
         else:
             idx = rng.choice(n_samples, size=batch_size, replace=False)
-            if isinstance(X, pd.DataFrame):
+            if isinstance(X, (pd.DataFrame, pd.Series)):
                 X_batch = X.iloc[idx]
             else:
                 X_batch = X[idx]
             
-            if isinstance(y, pd.Series):
+            if isinstance(y, (pd.DataFrame, pd.Series)):
                 y_batch = y.iloc[idx]
             else:
                 y_batch = y[idx]
 
-        # gradient step
+        # Gradient step
         grad = grad_f(x, X_batch, y_batch)
         x_new = x - learning_rate * grad
 
-        # convergence check
+        # Convergence check
         if np.linalg.norm(x_new - x) < tol:
             x = x_new
             break
@@ -1225,7 +1262,7 @@ def generate_random_initial_points(n_points, n_params, lower=-10, upper=10, rand
         np.random.seed(random_state)
     return [lower + (upper - lower) * np.random.rand(n_params) for _ in range(n_points)]
 
-def predictive_sgd_optimization(f, grad_f, X, y, n_points=10, n_params=None, 
+def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_params=None, 
                               learning_rate=0.01, max_steps=100, ar_lag=3, 
                               arma_p=3, arma_q=1, region_step_size=1.0,
                               use_arma=True, batch_size=None, random_state=42):
@@ -1268,7 +1305,7 @@ def predictive_sgd_optimization(f, grad_f, X, y, n_points=10, n_params=None,
     print(f"Running SGD optimization with {n_points} initial points, {n_params} parameters")
     
     # Step 1: Generate random initial points
-    initial_points = generate_random_initial_points(n_points, n_params, random_state=random_state)
+    #initial_points = generate_random_initial_points(n_points, n_params, random_state=random_state)
     
     # Step 2: Run SGD from each initial point and collect gradient histories
     print("Collecting gradient history...")
@@ -1487,7 +1524,7 @@ def pipeline_gradient_new(params, X_raw, y, epsilon=1e-6):
     
     return grad
 
-def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_steps=50, batch_size=32, use_arma=True):
+def optimize_pipeline_with_predictive_sgd(X_train, y_train, initial_points, n_points=5, max_steps=50, batch_size=32, use_arma=True):
     """
     Apply predictive SGD optimization to the pipeline with soft parameters.
     """
@@ -1501,6 +1538,7 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
         grad_f=pipeline_gradient,
         X=X_train,
         y=y_train,
+        initial_points=initial_points,
         n_points=n_points,
         n_params=n_params,
         max_steps=max_steps,
@@ -1516,6 +1554,16 @@ def optimize_pipeline_with_predictive_sgd(X_train, y_train, n_points=5, max_step
     return best_params, best_loss, interpretation
 
 
+
+def get_all_results_from_std_sgd(f, grad_f, X, y, initial_points, learning_rate=0.01, max_steps=1000, tol=1e-6, batch_size=32, random_state=None):
+ loss_min = np.inf
+ x_min = None
+ for start_point in initial_points:
+     x_est, loss_est =standard_sgd(f, grad_f, X, y, start_point, max_iterations=max_steps, learning_rate=learning_rate, tol=tol, batch_size=batch_size, random_state=random_state)
+     if loss_est < loss_min:
+         loss_min = loss_est
+         x_min = x_est
+ return x_min,loss_min
 
 
 
@@ -1539,16 +1587,21 @@ def example_usage():
 
     sgd_max_iterations = 1000
 
+
+    n_features = X_df.shape[1]
+    n_params = 6 + n_features
+    initial_points = generate_random_initial_points(n_points=5, n_params=n_params, random_state=42)
+
     methods = {
         "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd(
-            X_df, y, n_points=5, max_steps=50, batch_size=32, use_arma=True
+            X_df, y, initial_points, n_points=5, max_steps=50, batch_size=32, use_arma=True
         ),
         "Our Approach (v1)": lambda: optimize_full_pipeline(
             X_df, y, max_iterations=sgd_max_iterations, batch_size=32
         ),
-        "Standard SGD": lambda: standard_sgd(
+        "Standard SGD": lambda: get_all_results_from_std_sgd(
             pipeline_with_soft_parameters, pipeline_gradient,
-            X_df, y, max_iterations=sgd_max_iterations, batch_size=32
+            X_df, y, initial_points, max_steps=sgd_max_iterations, batch_size=32
         ),
         "SGD with Bound": lambda: sgd_with_bound(
             pipeline_with_soft_parameters, pipeline_gradient,
