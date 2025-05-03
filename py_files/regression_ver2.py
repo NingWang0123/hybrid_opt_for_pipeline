@@ -1661,3 +1661,31 @@ if __name__ == "__main__":
    example_usage()
 
 # python py_files/regression.py
+
+def standard_sgd(f, grad_f, start_point, X, y, learning_rate=0.01, max_steps=100, tol=1e-6, batch_size=None, random_state=None):
+    """
+    regular sgd
+    """
+    x = np.array(start_point, dtype=float)
+    
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+    
+    for i in range(max_steps):
+        # Sample a batch if batch_size is specified
+        if batch_size is not None and batch_size < n_samples:
+            idx = rng.choice(n_samples, size=batch_size, replace=False)
+            X_batch, y_batch = X[idx], y[idx]
+        else:
+            X_batch, y_batch = X, y
+            
+        gradient = grad_f(x, X_batch, y_batch)
+        x_new = x - learning_rate * gradient
+                
+        if np.linalg.norm(x_new - x) < tol:
+            break
+        
+        x = x_new
+    
+    loss = f(x, X, y)
+    return x, loss
