@@ -1769,3 +1769,359 @@ if __name__ == "__main__":
     example_usage()
 
 # python py_files/regression.py
+
+
+#### new method
+
+def encode_gradient_sign(gradient, threshold=1e-6):
+    """
+    Encode gradient signs into categorical values:
+    -1: negative gradient
+     0: near-zero gradient (within |threshold|)
+     1: positive gradient
+    """
+    signs = np.zeros_like(gradient, dtype=int)
+    signs[gradient < -threshold] = -1
+    signs[gradient > threshold] = 1
+    return signs
+
+def collect_gradient_history(initial_points, f, grad_f, X, y,
+                             max_iterations=1000,
+                             learning_rate=0.01,
+                             tol=1e-6,
+                             batch_size=None,
+                             random_state=None):
+    """
+    Run (mini-batch) SGD from each point in `initial_points` and collect:
+      - x_history:     all visited x
+      - loss_history:  all loss values
+      - gradient_signs_history: gradient-sign vectors at each step
+
+    Returns:
+      x_history, loss_history, gradient_signs_history
+    """
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+    
+    gradient_signs_history = []
+    x_history = []
+    loss_history = []
+    
+    for init_x in initial_points:
+        x = np.array(init_x, dtype=float)
+        
+        for _ in range(max_iterations):
+            # sample a batch
+            if batch_size is None or batch_size >= n_samples:
+                X_batch, y_batch = X, y
+            else:
+                idx = rng.choice(n_samples, size=batch_size, replace=False)
+                X_batch, y_batch = X[idx], y[idx]
+            
+            # compute gradient and loss
+            gradient = grad_f(x, X_batch, y_batch)
+            loss = f(x, X_batch, y_batch)
+            
+            # record history
+            gradient_signs_history.append(encode_gradient_sign(gradient))
+            x_history.append(x.copy())
+            loss_history.append(loss)
+            
+            # step
+            x_new = x - learning_rate * gradient
+            if np.linalg.norm(x_new - x) < tol:
+                x = x_new
+                break
+            x = x_new
+
+    return x_history, loss_history, gradient_signs_history
+
+def train_ar_model(sign_history, max_lag=3):
+    """
+    Train an AR(p) model on each parameter's gradient-sign history,
+    selecting the order p ∈ [1..max_lag] that gives the lowest AIC.
+    """
+    # Convert sign_history to numpy array if it's not already
+    sign_history = np.asarray(sign_history, dtype=float)
+    
+    # Handle different shapes of sign_history
+    if len(sign_history.shape) == 1:  # Single parameter case
+        n_steps = len(sign_history)
+        n_params = 1
+        sign_history = sign_history.reshape(n_steps, 1)
+    else:
+        n_steps, n_params = sign_history.shape
+    
+    models = []
+
+    for i in range(n_params):
+        y = sign_history[:, i]
+        
+        # need at least p+1 points to fit AR(p)
+        if n_steps < 2:
+            models.append(None)
+            continue
+        
+        best_aic = np.inf
+        best_fit = None
+        
+        # try orders 1..max_lag (but not exceeding n_steps-1)
+        for p in range(1, min(max_lag, n_steps-1) + 1):
+            try:
+                mod = ARIMA(y, order=(p, 0, 0))
+                fit = mod.fit()
+                if fit.aic < best_aic:
+                    best_aic = fit.aic
+                    best_fit = fit
+            except Exception as e:
+                # skip orders that fail
+                continue
+        
+        models.append(best_fit)
+
+    return models
+
+def train_arma_model(sign_history, p=3, q=1):
+    """
+    Train an ARMA(p,q) model on each parameter's gradient-sign history.
+    """
+    # Convert sign_history to numpy array if it's not already
+    sign_history = np.asarray(sign_history, dtype=float)
+    
+    # Handle different shapes of sign_history
+    if len(sign_history.shape) == 1:  # Single parameter case
+        n_steps = len(sign_history)
+        n_params = 1
+        sign_history = sign_history.reshape(n_steps, 1)
+    else:
+        n_steps, n_params = sign_history.shape
+    
+    models = []
+    
+    for i in range(n_params):
+        y = sign_history[:, i]
+        
+        # Need enough points to fit the model
+        if len(y) > p + q + 1:
+            try:
+                mod = ARIMA(y, order=(p, 0, q))
+                fit = mod.fit()
+                models.append(fit)
+            except Exception as e:
+                print(f"Error fitting ARMA model for parameter {i}: {e}")
+                models.append(None)
+        else:
+            models.append(None)
+    
+    return models
+
+def predict_next_signs_change(models, last_signs, max_steps = 10):
+    """
+    Predict the next gradient sign changes using trained time series models.
+    """
+    # Convert last_signs to numpy array if it's not already
+    last_signs = np.asarray(last_signs, dtype=int)
+
+    
+    n_params = len(models)
+
+    sign_num = 1
+
+    for sign_num in range(max_steps):
+      sign_num += 1
+      predicted_signs = np.zeros(n_params, dtype=int)
+    
+      for i in range(n_params):
+          if models[i] is not None:
+              try:
+                  # Use model to predict next sign
+                  prediction = models[i].forecast(sign_num)
+                  # Convert continuous prediction to sign (-1, 0, 1)
+                  if prediction[0] < -0.33:
+                      predicted_signs[i] = -1
+                  elif prediction[0] > 0.33:
+                      predicted_signs[i] = 1
+                  else:
+                      predicted_signs[i] = 0
+              except Exception as e:
+                  # Default to last known sign on error
+                  if i < len(last_signs):
+                      predicted_signs[i] = last_signs[i]
+          else:
+              # No model available, use last known sign
+              if i < len(last_signs):
+                  predicted_signs[i] = last_signs[i]
+
+
+      if np.any(predicted_signs != last_signs):
+        break
+    
+    return predicted_signs,sign_num
+
+
+def determine_flip_region(predicted_signs,sign_num, current_point, step_size=1.0):
+    """
+    Determine bounds for a flip region based on predicted gradient sign changes.
+    """
+    n_params = len(current_point)
+    lower_bounds = np.zeros(n_params)
+    upper_bounds = np.zeros(n_params)
+    
+    for i in range(n_params):
+        if predicted_signs[i] < 0:  # Negative gradient (moving right decreases function)
+            lower_bounds[i] = current_point[i]
+            upper_bounds[i] = current_point[i] + step_size*sign_num
+        elif predicted_signs[i] > 0:  # Positive gradient (moving left decreases function)
+            lower_bounds[i] = current_point[i] - step_size*sign_num
+            upper_bounds[i] = current_point[i]
+        else:  # Near-zero gradient (flat region)
+            lower_bounds[i] = current_point[i] - step_size*sign_num/2
+            upper_bounds[i] = current_point[i] + step_size*sign_num/2
+    
+    return lower_bounds, upper_bounds
+
+
+def constrained_sgd(f, grad_f,bounds, X, y, learning_rate=0.01, max_steps=100, tol=1e-6, batch_size=None, random_state=None):
+    """
+    Run SGD with constraints to keep optimization within a predicted convex region.
+    """
+    lower_bounds, upper_bounds = bounds
+    x = np.array(lower_bounds, dtype=float)
+    upper_bounds = np.array(upper_bounds, dtype=float)
+    
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+    
+    for i in range(max_steps):
+        # Sample a batch if batch_size is specified
+        if batch_size is not None and batch_size < n_samples:
+            idx = rng.choice(n_samples, size=batch_size, replace=False)
+            X_batch, y_batch = X[idx], y[idx]
+        else:
+            X_batch, y_batch = X, y
+            
+        gradient = grad_f(x, X_batch, y_batch)
+        x_new = x - learning_rate * gradient
+        
+          
+        if np.linalg.norm(x_new - x) < tol:
+            break
+
+        if np.any(x_new < lower_bounds) or np.any(x_new > upper_bounds):
+            # stepping outside the convex region → stop here
+            break
+
+        x = x_new
+        
+           
+    loss = f(x, X, y)
+    return x, loss
+
+def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_params=None, 
+                              learning_rate=0.01, max_steps=100, ar_lag=3, 
+                              arma_p=3, arma_q=1, region_step_size=1.0,
+                              use_arma=True, batch_size=None,training_frac = 0.3, random_state=42):
+    if n_params is None:
+        # Infer parameter count from X
+        if isinstance(X, pd.DataFrame):
+            n_features = X.shape[1]
+        else:
+            n_features = X.shape[1]
+        n_params = n_features  # Just the regression parameters, not pipeline parameters
+    
+    # Convert pandas objects to numpy arrays if needed
+    if isinstance(X, pd.DataFrame):
+        X = X.values
+    if isinstance(y, pd.Series):
+        y = y.values
+    
+    print(f"Running SGD optimization with {n_points} initial points, {n_params} parameters")
+    
+    # Step 1: Get the samples
+    k_frac = int(len(initial_points) * training_frac)
+    training_points = random.sample(initial_points, k_frac)
+
+    test_points = list(set(initial_points) - set(training_points))
+    
+    # Step 2: Run SGD from each initial point and collect gradient histories
+    print("Collecting gradient history...")
+    x_history, loss_history, gradient_signs_history = collect_gradient_history(
+        training_points, f, grad_f, X, y,
+        max_iterations=max_steps,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        random_state=random_state
+    )
+
+    # get the best result from training
+    best_loss_index = np.argmin(loss_history)
+    best_loss = loss_history[best_loss_index]
+    best_params = x_history[best_loss_index]
+
+
+    # Step 3: Train time series models for gradient sign prediction
+    print("Training time series models for gradient sign prediction...")
+    
+    # Make sure gradient_signs_history is properly formatted for model training
+    if isinstance(gradient_signs_history, list):
+        gradient_signs_history = np.array(gradient_signs_history)
+    
+    if use_arma:
+        print(f"Using ARMA({arma_p},{arma_q}) models...")
+        ts_models = train_arma_model(gradient_signs_history, p=arma_p, q=arma_q)
+    else:
+        print(f"Using AR({ar_lag}) models...")
+        ts_models = train_ar_model(gradient_signs_history, max_lag=ar_lag)
+    
+    # Step 4: Predictive SGD with region constraints
+    print("Running predictive SGD with region constraints...")
+    enhanced_results = []
+    
+    for start_point in test_points:
+        print(f"  - Enhanced optimization from point {start_point}")
+        current_point = start_point.copy()
+        current_loss = f(current_point, X, y)
+        current_region_step_size = region_step_size
+        
+        while max_steps>0:
+            # Calculate current gradient and its sign
+            current_gradient = grad_f(current_point, X, y)
+            current_signs = encode_gradient_sign(current_gradient)
+            
+            # Predict next gradient sign changes
+            predicted_signs,sign_num = predict_next_sign_changes(ts_models, current_signs,max_steps) 
+
+            # update the max stpes
+            max_steps = max_steps - sign_num
+                                                      
+            
+            # Determine convex region based on predictions
+            lower_bounds, upper_bounds = determine_flip_region(
+                predicted_signs,sign_num, current_point, current_region_step_size)
+            
+            # Run constrained SGD within the predicted region
+            new_point, new_loss = constrained_sgd(
+                f, grad_f, current_point, (lower_bounds, upper_bounds), 
+                X, y, learning_rate, max_steps=sign_num, batch_size=batch_size, random_state=random_state)
+            
+            # Check if we've improved
+            if new_loss < current_loss - 1e-6:
+                current_point = new_point
+                current_loss = new_loss
+                # Reset step size if we found a better point
+                current_region_step_size = region_step_size
+        
+        enhanced_results.append((current_point, current_loss))
+    
+    # Step 5: Find the best result across all optimization runs
+    
+    if enhanced_results:
+        best_idx_enhanced_results = np.argmin([loss for _, loss in enhanced_results])
+        best_params_enhanced_results, best_loss_enhanced_results = enhanced_results[best_idx_enhanced_results]
+
+        if best_loss_enhanced_results < best_loss:
+            best_params = best_params_enhanced_results
+            best_loss = best_loss_enhanced_results
+        print(f"Best loss: {best_loss}")
+
+    return best_params, best_loss
