@@ -1981,12 +1981,13 @@ def determine_flip_region(predicted_signs,sign_num, current_point, step_size=1.0
     return lower_bounds, upper_bounds
 
 
-def constrained_sgd(f, grad_f,bounds, X, y, learning_rate=0.01, max_steps=100, tol=1e-6, batch_size=None, random_state=None):
+def constrained_sgd(f, grad_f,current_point,bounds, X, y, learning_rate=0.01, max_steps=100, tol=1e-6, batch_size=None, random_state=None):
     """
     Run SGD with constraints to keep optimization within a predicted convex region.
     """
     lower_bounds, upper_bounds = bounds
-    x = np.array(lower_bounds, dtype=float)
+    x = np.array(current_point, dtype=float)
+    lower_bounds = np.array(lower_bounds, dtype=float)
     upper_bounds = np.array(upper_bounds, dtype=float)
     
     rng = np.random.RandomState(random_state)
@@ -2017,6 +2018,8 @@ def constrained_sgd(f, grad_f,bounds, X, y, learning_rate=0.01, max_steps=100, t
     loss = f(x, X, y)
     return x, loss
 
+
+
 def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_params=None, 
                               learning_rate=0.01, max_steps=100, ar_lag=3, 
                               arma_p=3, arma_q=1, region_step_size=1.0,
@@ -2041,7 +2044,7 @@ def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_
     k_frac = int(len(initial_points) * training_frac)
     training_points = random.sample(initial_points, k_frac)
 
-    test_points = list(set(initial_points) - set(training_points))
+    test_points = [point for point in initial_points if point not in training_points]
     
     # Step 2: Run SGD from each initial point and collect gradient histories
     print("Collecting gradient history...")
@@ -2057,6 +2060,8 @@ def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_
     best_loss_index = np.argmin(loss_history)
     best_loss = loss_history[best_loss_index]
     best_params = x_history[best_loss_index]
+
+    print(f"Best loss: {best_loss} for training")
 
 
     # Step 3: Train time series models for gradient sign prediction
@@ -2089,7 +2094,7 @@ def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_
             current_signs = encode_gradient_sign(current_gradient)
             
             # Predict next gradient sign changes
-            predicted_signs,sign_num = predict_next_sign_changes(ts_models, current_signs,max_steps) 
+            predicted_signs,sign_num = predict_next_signs_change(ts_models, current_signs,max_steps) 
 
             # update the max stpes
             max_steps = max_steps - sign_num
@@ -2103,6 +2108,7 @@ def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_
             new_point, new_loss = constrained_sgd(
                 f, grad_f, current_point, (lower_bounds, upper_bounds), 
                 X, y, learning_rate, max_steps=sign_num, batch_size=batch_size, random_state=random_state)
+            
             
             # Check if we've improved
             if new_loss < current_loss - 1e-6:
@@ -2118,6 +2124,7 @@ def predictive_sgd_optimization(f, grad_f, X, y, initial_points, n_points=10, n_
     if enhanced_results:
         best_idx_enhanced_results = np.argmin([loss for _, loss in enhanced_results])
         best_params_enhanced_results, best_loss_enhanced_results = enhanced_results[best_idx_enhanced_results]
+        print(f"Best loss for enhanced results: {best_loss_enhanced_results}")
 
         if best_loss_enhanced_results < best_loss:
             best_params = best_params_enhanced_results
