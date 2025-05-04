@@ -1191,7 +1191,7 @@ def collect_gradient_history(initial_points, f, grad_f, X, y,
     """
     Run (mini-batch) SGD from each point in `initial_points` and collect:
       - x_history:     all visited x
-      - loss_history:  all loss values 
+      - loss_history:  all loss values
       - gradient_signs_history: gradient-sign vectors at each step
 
     Returns:
@@ -1241,6 +1241,7 @@ def collect_gradient_history(initial_points, f, grad_f, X, y,
             x = x_new
 
     return x_history, loss_history, gradient_signs_history
+
 
 
 def train_ar_model(sign_history, max_lag=3):
@@ -1980,10 +1981,11 @@ def optimize_pipeline_with_predictive_sgd_new(X_train, y_train, initial_points, 
 
 ##### with curvature one 
 
+
 def _slice_rows(X, y, idx):
     """
     Given X (DataFrame or ndarray) and y (Series/ndarray) and a list/array of
-    integer row‐indices, return (Xb, yb) for that minibatch.
+    integer indices, return the corresponding minibatch (Xb, yb).
     """
     if hasattr(X, "iloc"):
         Xb = X.iloc[idx]
@@ -1994,13 +1996,6 @@ def _slice_rows(X, y, idx):
     else:
         yb = y[idx]
     return Xb, yb
-
-def encode_gradient_sign(gradient, threshold=1e-6):
-    signs = np.zeros_like(gradient, dtype=int)
-    signs[gradient < -threshold] = -1
-    signs[gradient >  threshold] =  1
-    return signs
-
 
 def train_ar_model_with_curvature(sign_history, max_lag=3):
     sign_history = np.asarray(sign_history, dtype=float)
@@ -2078,6 +2073,42 @@ def determine_flip_region_with_curvature(predicted_signs, sign_num, current_poin
             ub[i] = current_point[i] + half
     return lb, ub
 
+def constrained_sgd_with_curvature(f, grad_f, current_point, bounds, X, y,
+                    base_lr=0.01, curvature_smooth=1.0,
+                    max_steps=100, tol=1e-6,
+                    batch_size=None, random_state=None):
+    lb, ub = map(np.array, bounds)
+    x = np.array(current_point, dtype=float)
+    prev_x = prev_grad = None
+
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+
+    for _ in range(max_steps):
+        if batch_size and batch_size < n_samples:
+            idx = rng.choice(n_samples, size=batch_size, replace=False)
+            Xb, yb = X[idx], y[idx]
+        else:
+            Xb, yb = X, y
+
+        grad = grad_f(x, Xb, yb)
+        if prev_x is not None:
+            num = np.linalg.norm(grad - prev_grad)
+            den = np.linalg.norm(x - prev_x) + 1e-8
+            curvature = num / den
+        else:
+            curvature = 0.0
+
+        lr_t = base_lr / (1.0 + curvature_smooth * curvature)
+        x_new = x - lr_t * grad
+
+        if (np.any(x_new < lb) or np.any(x_new > ub)
+            or np.linalg.norm(x_new - x) < tol):
+            break
+
+        prev_x, prev_grad, x = x, grad, x_new
+
+    return x, f(x, X, y)
 
 def collect_gradient_history_with_curvature(
     initial_points, f, grad_f, X, y,
@@ -2097,7 +2128,7 @@ def collect_gradient_history_with_curvature(
         prev_x = prev_grad = None
 
         for _ in range(max_iterations):
-            # ---- use safe slicing instead of X[idx], y[idx] ----
+            # ---- use safe slicing ----
             if batch_size and batch_size < n_samples:
                 idx = rng.choice(n_samples, size=batch_size, replace=False)
                 Xb, yb = _slice_rows(X, y, idx)
@@ -2105,11 +2136,13 @@ def collect_gradient_history_with_curvature(
                 Xb, yb = X, y
 
             grad = grad_f(x, Xb, yb)
-            loss = f(x, Xb, yb)
+
+            # !!! compute loss on FULL DATA !!!
+            full_loss = f(x, X, y)
 
             gradient_signs_history.append(encode_gradient_sign(grad))
             x_history.append(x.copy())
-            loss_history.append(loss)
+            loss_history.append(full_loss)
 
             # compute local curvature
             if prev_x is not None:
@@ -2130,142 +2163,6 @@ def collect_gradient_history_with_curvature(
             prev_x, prev_grad, x = x, grad, x_new
 
     return x_history, loss_history, gradient_signs_history
-
-
-
-def constrained_sgd_with_curvature(
-    f, grad_f, x0, bounds, X, y,
-    base_lr=0.01, curvature_smooth=1.0,
-    max_steps=100, batch_size=None, random_state=None, tol=1e-6
-):
-    """
-    Run SGD starting at x0, constrained to box bounds=(lb,ub) per‐param.
-    Uses safe row‐slicing for minibatches.
-    """
-    lb, ub = bounds
-    x = np.array(x0, dtype=float)
-    rng = np.random.RandomState(random_state)
-    n_samples = X.shape[0]
-    prev_x = prev_grad = None
-
-    for _ in range(max_steps):
-        # minibatch
-        if batch_size is not None and batch_size < n_samples:
-            idx = rng.choice(n_samples, size=batch_size, replace=False)
-            Xb, yb = _slice_rows(X, y, idx)
-        else:
-            Xb, yb = X, y
-
-        grad = grad_f(x, Xb, yb)
-
-        # curvature estimate
-        if prev_x is not None:
-            num = np.linalg.norm(grad - prev_grad)
-            den = np.linalg.norm(x - prev_x) + 1e-8
-            curvature = num / den
-        else:
-            curvature = 0.0
-
-        lr_t = base_lr / (1.0 + curvature_smooth * curvature)
-        x_new = x - lr_t * grad
-
-        # project into [lb, ub]
-        x_new = np.minimum(np.maximum(x_new, lb), ub)
-
-        if np.linalg.norm(x_new - x) < tol:
-            x = x_new
-            break
-
-        prev_x, prev_grad, x = x, grad, x_new
-
-    return x, f(x, X, y)
-
-def predictive_sgd_optimization_with_curvature(
-    f, grad_f, X, y, initial_points,
-    learning_rate=0.01, curvature_smooth=1.0,
-    max_steps=100, ar_lag=3,
-    arma_p=3, arma_q=1,
-    region_step_size=1.0,
-    use_arma=True,
-    training_frac=0.3,
-    batch_size=None,
-    random_state=42
-):
-    # 1) split initial_points into train/test
-    n_pts = len(initial_points)
-    k = int(n_pts * training_frac)
-    all_idx = list(range(n_pts))
-    rnd = random.Random(random_state)
-    train_idx = rnd.sample(all_idx, k)
-    test_idx  = [i for i in all_idx if i not in train_idx]
-    train_pts = [initial_points[i] for i in train_idx]
-    test_pts  = [initial_points[i] for i in test_idx]
-
-    # 2) collect gradient history on train_pts
-    x_hist, loss_hist, sign_hist = collect_gradient_history_with_curvature(
-        train_pts, f, grad_f, X, y,
-        max_iterations=max_steps,
-        base_lr=learning_rate,
-        curvature_smooth=curvature_smooth,
-        batch_size=batch_size,
-        random_state=random_state
-    )
-    best_i = np.argmin(loss_hist)
-    best_params, best_loss = x_hist[best_i], loss_hist[best_i]
-
-    # 3) fit AR/ARMA on sign history
-    ts_models = (
-        train_arma_model_with_curvature(sign_hist, p=arma_p, q=arma_q)
-        if use_arma
-        else train_ar_model_with_curvature(sign_hist, max_lag=ar_lag)
-    )
-
-    # 4) predictive constrained‐SGD on test_pts
-    enhanced = []
-    for pt in test_pts:
-        cur_pt   = np.array(pt, dtype=float)
-        cur_loss = f(cur_pt, X, y)
-        steps_left = max_steps
-
-        while steps_left > 0:
-            grad = grad_f(cur_pt, X, y)
-            signs, ahead = predict_next_signs_change_with_curvature(
-                ts_models,
-                encode_gradient_sign(grad),
-                max_steps=steps_left
-            )
-            steps_left -= ahead
-
-            lb, ub = determine_flip_region_with_curvature(
-                signs, ahead, cur_pt, region_step_size, grad
-            )
-
-            new_pt, new_loss = constrained_sgd_with_curvature(
-                f, grad_f, cur_pt, (lb, ub),
-                X, y,
-                base_lr=learning_rate * np.sqrt(ahead),
-                curvature_smooth=curvature_smooth,
-                max_steps=ahead,
-                batch_size=batch_size,
-                random_state=random_state
-            )
-
-            if new_loss < cur_loss - 1e-6:
-                cur_pt, cur_loss = new_pt, new_loss
-            else:
-                break
-
-        enhanced.append((cur_pt, cur_loss))
-
-    # 5) choose best overall
-    if enhanced:
-        i_best = np.argmin([loss for (_, loss) in enhanced])
-        if enhanced[i_best][1] < best_loss:
-            best_params, best_loss = enhanced[i_best]
-
-    return best_params, best_loss
-
-
 
 
 def optimize_pipeline_with_predictive_sgd_v2_curvature(X_train, y_train, initial_points,max_steps=1000, batch_size=32, use_arma=True):
@@ -2347,6 +2244,52 @@ def de_search_method_for_hybrid(f, bounds, X, y, maxiters=100):
     )
     return result.x, result.fun
 
+
+
+def optimize_pipeline_with_predictive_sgd_v3_hybrid(
+    X_train, y_train, initial_points,
+    max_steps=1000, batch_size=32, use_arma=True
+):
+    n_features = X_train.shape[1]
+    best_params, best_loss = predictive_sgd_optimization_with_curvature_hybrid(
+        f=pipeline_with_soft_parameters,
+        grad_f=pipeline_gradient,
+        hessian_f=pipeline_hessian,
+        X=X_train, y=y_train,
+        initial_points=initial_points,
+        max_steps=max_steps,
+        use_arma=use_arma,
+        learning_rate=0.01,
+        region_step_size=1.0,
+        batch_size=batch_size
+    )
+    interpretation = interpret_parameters(best_params, feature_names=X_train.columns)
+    return best_params, best_loss, interpretation
+
+
+
+# -------------------------------------------------------------------
+# Differential‐Evolution search for hybrid method
+# -------------------------------------------------------------------
+def de_search_method_for_hybrid(f, bounds, X, y, maxiters=100):
+    lb, ub = bounds
+    if lb.shape != ub.shape:
+        raise ValueError(f"lb and ub must match: got {lb.shape} vs {ub.shape}")
+    de_bounds = [(float(l), float(u)) for l, u in zip(lb, ub)]
+    for i, (l, u) in enumerate(de_bounds):
+        if u < l:
+            raise ValueError(f"Bad bounds for dim {i}: {l} > {u}")
+    result = differential_evolution(
+        lambda beta: f(beta, X, y),
+        de_bounds,
+        maxiter=maxiters
+    )
+    return result.x, result.fun
+
+
+# -------------------------------------------------------------------
+# Main predictive SGD + DE hybrid
+# -------------------------------------------------------------------
 def predictive_sgd_optimization_with_curvature_hybrid(
     f, grad_f, hessian_f, X, y, initial_points,
     learning_rate=0.01, curvature_smooth=1.0,
@@ -2466,7 +2409,9 @@ def predictive_sgd_optimization_with_curvature_hybrid(
     return best_params, best_loss
 
 
-
+# -------------------------------------------------------------------
+# Wrapper to optimize your pipeline using v3 hybrid approach
+# -------------------------------------------------------------------
 def optimize_pipeline_with_predictive_sgd_v3_hybrid(
     X_train, y_train, initial_points,
     max_steps=1000, batch_size=32, use_arma=True
@@ -2488,166 +2433,167 @@ def optimize_pipeline_with_predictive_sgd_v3_hybrid(
     return best_params, best_loss, interpretation
 
 
+import numpy as np
+import random
 
-# ==================== Complete Example Usage ====================
-
-
-# def generate_random_initial_points(n_points, n_params, lower=-10, upper=10, random_state=None):
-#     """
-#     Generate random initial points within specified bounds.
-#     """
-#     if random_state is not None:
-#         np.random.seed(random_state)
-#     return [lower + (upper - lower) * np.random.rand(n_params) for _ in range(n_points)]
-
-
-def example_usage():
+# -------------------------------------------------------------------
+# Helper to safely slice rows by integer indices (DataFrame or ndarray)
+# -------------------------------------------------------------------
+def _slice_rows(X, y, idx):
     """
-    Example demonstrating how to use the full pipeline optimization.
+    Given X (DataFrame or ndarray) and y (Series/ndarray) and a list/array of
+    integer row‐indices, return (Xb, yb) for that minibatch.
     """
-    import time
-    import numpy as np
-
-    # Generate synthetic data with missing values
-    np.random.seed(42)
-
-    X_df = X_train
-    y = y_train
-    n_features = 3
-
-    sgd_max_iterations = 1000
+    if hasattr(X, "iloc"):
+        Xb = X.iloc[idx]
+    else:
+        Xb = X[idx]
+    if hasattr(y, "iloc"):
+        yb = y.iloc[idx]
+    else:
+        yb = y[idx]
+    return Xb, yb
 
 
-    n_features = X_df.shape[1]
-    n_params = 6 + n_features
-    initial_points = generate_random_initial_points(n_points=5, n_params=n_params, random_state=42)
+# -------------------------------------------------------------------
+# Constrained‐SGD within a param‐region, with safe slicing
+# -------------------------------------------------------------------
+def constrained_sgd_with_curvature(
+    f, grad_f, x0, bounds, X, y,
+    base_lr=0.01, curvature_smooth=1.0,
+    max_steps=100, batch_size=None, random_state=None, tol=1e-6
+):
+    """
+    Run SGD starting at x0, constrained to box bounds=(lb,ub) per‐param.
+    Uses safe row‐slicing for minibatches.
+    """
+    lb, ub = bounds
+    x = np.array(x0, dtype=float)
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+    prev_x = prev_grad = None
 
-    methods = {
-
-        "Our Approach (v3)": lambda: optimize_pipeline_with_predictive_sgd_v3_hybrid(X_df, y, initial_points, max_steps=sgd_max_iterations,
-                                                                                      batch_size=32, use_arma=True),
-
-        "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd_v2_curvature(X_df, y, initial_points,
-                                                                                        max_steps=sgd_max_iterations, batch_size=32, use_arma=True),
-        "Our Approach (v1)": lambda: optimize_full_pipeline(
-            X_df, y, max_iterations=sgd_max_iterations, batch_size=32
-        ),
-        "Standard SGD": lambda: get_all_results_from_std_sgd(
-            pipeline_with_soft_parameters, pipeline_gradient,
-            X_df, y, initial_points, max_steps=sgd_max_iterations, batch_size=32
-        ),
-        "SGD with Bound": lambda: sgd_with_bound(
-            pipeline_with_soft_parameters, pipeline_gradient,
-            np.random.randn(n_features + 6), np.ones(n_features + 6) * np.inf,
-            X_df, y, iterations=sgd_max_iterations, batch_size=32
-        ),
-        "Differential Evolution": lambda: de_only_search(
-            pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
-        ),
-        "CMA-ES": lambda: cma_es_search(
-            pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
-        ),
-        "PSO": lambda: pso_search(
-            pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
-        )
-    }
-
-    results = {}
-    for method_name, method_func in methods.items():
-        print(f"\nRunning {method_name}...")
-        start_time = time.time()
-        try:
-            output = method_func()
-            if method_name == "Our Approach (v2)":
-                optimal_params, min_value, interpretation = output
-            else:
-                optimal_params, min_value = output
-                interpretation = None
-            end_time = time.time()
-            results[method_name] = {
-                "success": True,
-                "time": end_time - start_time,
-                "loss": min_value,
-                "params": optimal_params,
-                "interpretation": interpretation 
-            }
-            print(f"  - Success: Loss = {min_value:.6f}, Time = {end_time - start_time:.2f} seconds")
-        except Exception as e:
-            end_time = time.time()
-            results[method_name] = {
-                "success": False,
-                "time": end_time - start_time,
-                "error": str(e)
-            }
-            print(f"  - Failed: {str(e)}")
-            print(f"  - Time elapsed: {end_time - start_time:.2f} seconds")
-
-    # Print comparison table
-    print("\n" + "="*50)
-    print("OPTIMIZATION METHODS COMPARISON")
-    print("="*50)
-    print(f"{'Method':<25} {'Loss':<15} {'Time (s)':<15} {'Status':<10}")
-    print("-"*65)
-
-    for method, result in results.items():
-        if result["success"]:
-            print(f"{method:<25} {result['loss']:<15.6f} {result['time']:<15.2f} {'Success':<10}")
+    for _ in range(max_steps):
+        # minibatch
+        if batch_size is not None and batch_size < n_samples:
+            idx = rng.choice(n_samples, size=batch_size, replace=False)
+            Xb, yb = _slice_rows(X, y, idx)
         else:
-            print(f"{method:<25} {'N/A':<15} {result['time']:<15.2f} {'Failed':<10}")
+            Xb, yb = X, y
 
-    # Print detailed parameters for the best method
-    best_method = min(
-        [m for m, r in results.items() if r["success"]],
-        key=lambda m: results[m]["loss"],
-        default=None
+        grad = grad_f(x, Xb, yb)
+
+        # curvature estimate
+        if prev_x is not None:
+            num = np.linalg.norm(grad - prev_grad)
+            den = np.linalg.norm(x - prev_x) + 1e-8
+            curvature = num / den
+        else:
+            curvature = 0.0
+
+        lr_t = base_lr / (1.0 + curvature_smooth * curvature)
+        x_new = x - lr_t * grad
+
+        # project into [lb, ub]
+        x_new = np.minimum(np.maximum(x_new, lb), ub)
+
+        if np.linalg.norm(x_new - x) < tol:
+            x = x_new
+            break
+
+        prev_x, prev_grad, x = x, grad, x_new
+
+    return x, f(x, X, y)
+
+# -------------------------------------------------------------------
+# The “v2” predictive‐SGD driver, fixed for safe slicing
+# -------------------------------------------------------------------
+def predictive_sgd_optimization_with_curvature(
+    f, grad_f, X, y, initial_points,
+    learning_rate=0.01, curvature_smooth=1.0,
+    max_steps=100, ar_lag=3,
+    arma_p=3, arma_q=1,
+    region_step_size=1.0,
+    use_arma=True,
+    training_frac=0.3,
+    batch_size=None,
+    random_state=42
+):
+    # 1) split initial_points into train/test
+    n_pts = len(initial_points)
+    k = int(n_pts * training_frac)
+    all_idx = list(range(n_pts))
+    rnd = random.Random(random_state)
+    train_idx = rnd.sample(all_idx, k)
+    test_idx  = [i for i in all_idx if i not in train_idx]
+    train_pts = [initial_points[i] for i in train_idx]
+    test_pts  = [initial_points[i] for i in test_idx]
+
+    # 2) collect gradient history on train_pts
+    x_hist, loss_hist, sign_hist = collect_gradient_history_with_curvature(
+        train_pts, f, grad_f, X, y,
+        max_iterations=max_steps,
+        base_lr=learning_rate,
+        curvature_smooth=curvature_smooth,
+        batch_size=batch_size,
+        random_state=random_state
+    )
+    best_i = np.argmin(loss_hist)
+    best_params, best_loss = x_hist[best_i], loss_hist[best_i]
+
+    # 3) fit AR/ARMA on sign history
+    ts_models = (
+        train_arma_model_with_curvature(sign_hist, p=arma_p, q=arma_q)
+        if use_arma
+        else train_ar_model_with_curvature(sign_hist, max_lag=ar_lag)
     )
 
-    if best_method:
-        print("\n" + "="*50)
-        print(f"BEST METHOD: {best_method}")
-        print("="*50)
-        best_result = results[best_method]
-        best_params = best_result["params"]
-        
-        if best_result["interpretation"] is not None:
-            interpretation = best_result["interpretation"]
-        else:
-            interpretation = interpret_parameters(best_params, X_df.columns)
+    # 4) predictive constrained‐SGD on test_pts
+    enhanced = []
+    for pt in test_pts:
+        cur_pt   = np.array(pt, dtype=float)
+        cur_loss = f(cur_pt, X, y)
+        steps_left = max_steps
 
-        print("\nOptimized Parameters:")
-        print("Imputation weights:")
-        for method, weight in interpretation['imputation'].items():
-            print(f"  - {method}: {weight:.4f}")
+        while steps_left > 0:
+            grad = grad_f(cur_pt, X, y)
+            signs, ahead = predict_next_signs_change_with_curvature(
+                ts_models,
+                encode_gradient_sign(grad),
+                max_steps=steps_left
+            )
+            steps_left -= ahead
 
-        print("\nScaling weights:")
-        for method, weight in interpretation['scaling'].items():
-            print(f"  - {method}: {weight:.4f}")
+            lb, ub = determine_flip_region_with_curvature(
+                signs, ahead, cur_pt, region_step_size, grad
+            )
 
-        print("\nRegression coefficients:")
-        for feature, coef in interpretation['regression'].items():
-            print(f"  - {feature}: {coef:.4f}")
+            new_pt, new_loss = constrained_sgd_with_curvature(
+                f, grad_f, cur_pt, (lb, ub),
+                X, y,
+                base_lr=learning_rate * np.sqrt(ahead),
+                curvature_smooth=curvature_smooth,
+                max_steps=ahead,
+                batch_size=batch_size,
+                random_state=random_state
+            )
 
-    # Generate visualization
-    plot_optimization_results(results, None)
+            if new_loss < cur_loss - 1e-6:
+                cur_pt, cur_loss = new_pt, new_loss
+            else:
+                break
+
+        enhanced.append((cur_pt, cur_loss))
+
+    # 5) choose best overall
+    if enhanced:
+        i_best = np.argmin([loss for (_, loss) in enhanced])
+        if enhanced[i_best][1] < best_loss:
+            best_params, best_loss = enhanced[i_best]
+
+    return best_params, best_loss
 
 
-
-# if __name__ == "__main__":
-#     global X_train, X_test, y_train, y_test
-
-#     dataset = 'diabetes' # 'diabetes', 'california_housing', 'regression', 'friedman1'
-#     if dataset == 'diabetes':
-#         X_train, X_test, y_train, y_test = diabetes()
-#     elif dataset == 'california_housing':
-#         X_train, X_test, y_train, y_test = california_housing()
-#     elif dataset == 'regression':
-#         X_train, X_test, y_train, y_test = regression()
-#     elif dataset == 'friedman1':
-#         X_train, X_test, y_train, y_test = friedman1()
-#     else:
-#         raise ValueError(f"Unknown dataset: {dataset}")
-   
-#     example_usage()
 
 # -------------------------------------------------------------------
 # Example usage & comparison loop
@@ -2734,4 +2680,3 @@ if __name__ == "__main__":
 
 
 # python py_files/regression_ver2.py
-
