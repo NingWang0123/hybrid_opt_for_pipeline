@@ -3,3 +3,6 @@ scikit-learn
 scipy
 pandas
 matplotlib
+statsmodels
+cma
+pyswarm
