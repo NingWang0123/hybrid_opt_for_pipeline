@@ -2128,3 +2128,248 @@ if __name__ == "__main__":
 
 # python py_files/regression.py
 
+
+##### with curvature one 
+
+def encode_gradient_sign(gradient, threshold=1e-6):
+    signs = np.zeros_like(gradient, dtype=int)
+    signs[gradient < -threshold] = -1
+    signs[gradient >  threshold] =  1
+    return signs
+
+def collect_gradient_history_with_curvature(initial_points, f, grad_f, X, y,
+                             max_iterations=1000,
+                             base_lr=0.01,
+                             curvature_smooth=1.0,
+                             tol=1e-6,
+                             batch_size=None,
+                             random_state=None):
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+    gradient_signs_history, x_history, loss_history = [], [], []
+
+    for init_x in initial_points:
+        x = np.array(init_x, dtype=float)
+        prev_x = prev_grad = None
+
+        for _ in range(max_iterations):
+            if batch_size and batch_size < n_samples:
+                idx = rng.choice(n_samples, size=batch_size, replace=False)
+                Xb, yb = X[idx], y[idx]
+            else:
+                Xb, yb = X, y
+
+            grad = grad_f(x, Xb, yb)
+            loss = f(x, Xb, yb)
+
+            gradient_signs_history.append(encode_gradient_sign(grad))
+            x_history.append(x.copy())
+            loss_history.append(loss)
+
+            if prev_x is not None:
+                num = np.linalg.norm(grad - prev_grad)
+                den = np.linalg.norm(x - prev_x) + 1e-8
+                curvature = num / den
+            else:
+                curvature = 0.0
+
+            lr_t = base_lr / (1.0 + curvature_smooth * curvature)
+            x_new = x - lr_t * grad
+
+            if np.linalg.norm(x_new - x) < tol:
+                x = x_new
+                break
+
+            prev_x, prev_grad, x = x, grad, x_new
+
+    return x_history, loss_history, gradient_signs_history
+
+def train_ar_model_with_curvature(sign_history, max_lag=3):
+    sign_history = np.asarray(sign_history, dtype=float)
+    if sign_history.ndim == 1:
+        sign_history = sign_history.reshape(-1, 1)
+    n_steps, n_params = sign_history.shape
+
+    models = []
+    for i in range(n_params):
+        y = sign_history[:, i]
+        best_fit, best_aic = None, np.inf
+        if n_steps < 2:
+            models.append(None)
+            continue
+        for p in range(1, min(max_lag, n_steps-1)+1):
+            try:
+                fit = ARIMA(y, order=(p,0,0)).fit(disp=False)
+                if fit.aic < best_aic:
+                    best_aic, best_fit = fit.aic, fit
+            except:
+                pass
+        models.append(best_fit)
+    return models
+
+def train_arma_model_with_curvature(sign_history, p=3, q=1):
+    sign_history = np.asarray(sign_history, dtype=float)
+    if sign_history.ndim == 1:
+        sign_history = sign_history.reshape(-1, 1)
+    models = []
+    for i in range(sign_history.shape[1]):
+        y = sign_history[:, i]
+        if len(y) > p + q + 1:
+            try:
+                fit = ARIMA(y, order=(p,0,q)).fit(disp=False)
+                models.append(fit)
+            except:
+                models.append(None)
+        else:
+            models.append(None)
+    return models
+
+def predict_next_signs_change_with_curvature(models, last_signs, max_steps=10):
+    last_signs = np.asarray(last_signs, dtype=int)
+    n = len(models)
+    for step in range(1, max_steps+1):
+        preds = np.zeros(n, dtype=int)
+        for i, m in enumerate(models):
+            if m is not None:
+                try:
+                    val = m.forecast(step)[0]
+                    preds[i] = -1 if val < -0.33 else (1 if val > 0.33 else 0)
+                except:
+                    preds[i] = last_signs[i]
+            else:
+                preds[i] = last_signs[i]
+        if not np.all(preds == last_signs):
+            return preds, step
+    return last_signs, max_steps
+
+def determine_flip_region_with_curvature(predicted_signs, sign_num, current_point,
+                          base_step_size, cur_grad):
+    n = len(current_point)
+    step = base_step_size * np.linalg.norm(cur_grad)
+    lb = np.zeros(n); ub = np.zeros(n)
+    for i in range(n):
+        if predicted_signs[i] < 0:
+            lb[i] = current_point[i]
+            ub[i] = current_point[i] + step * sign_num
+        elif predicted_signs[i] > 0:
+            lb[i] = current_point[i] - step * sign_num
+            ub[i] = current_point[i]
+        else:
+            half = step * sign_num / 2
+            lb[i] = current_point[i] - half
+            ub[i] = current_point[i] + half
+    return lb, ub
+
+def constrained_sgd_with_curvature(f, grad_f, current_point, bounds, X, y,
+                    base_lr=0.01, curvature_smooth=1.0,
+                    max_steps=100, tol=1e-6,
+                    batch_size=None, random_state=None):
+    lb, ub = map(np.array, bounds)
+    x = np.array(current_point, dtype=float)
+    prev_x = prev_grad = None
+
+    rng = np.random.RandomState(random_state)
+    n_samples = X.shape[0]
+
+    for _ in range(max_steps):
+        if batch_size and batch_size < n_samples:
+            idx = rng.choice(n_samples, size=batch_size, replace=False)
+            Xb, yb = X[idx], y[idx]
+        else:
+            Xb, yb = X, y
+
+        grad = grad_f(x, Xb, yb)
+        if prev_x is not None:
+            num = np.linalg.norm(grad - prev_grad)
+            den = np.linalg.norm(x - prev_x) + 1e-8
+            curvature = num / den
+        else:
+            curvature = 0.0
+
+        lr_t = base_lr / (1.0 + curvature_smooth * curvature)
+        x_new = x - lr_t * grad
+
+        if (np.any(x_new < lb) or np.any(x_new > ub)
+            or np.linalg.norm(x_new - x) < tol):
+            break
+
+        prev_x, prev_grad, x = x, grad, x_new
+
+    return x, f(x, X, y)
+
+def predictive_sgd_optimization_with_curvature(f, grad_f, X, y, initial_points,
+                                learning_rate=0.01, curvature_smooth=1.0,
+                                max_steps=100, ar_lag=3,
+                                arma_p=3, arma_q=1,
+                                region_step_size=1.0,
+                                use_arma=True,
+                                training_frac=0.3,
+                                batch_size=None,
+                                random_state=42):
+    # --- split by indices ---
+    n_pts = len(initial_points)
+    k = int(n_pts * training_frac)
+    all_idx = list(range(n_pts))
+    rnd = random.Random(random_state)
+    train_idx = rnd.sample(all_idx, k)
+    test_idx  = [i for i in all_idx if i not in train_idx]
+    train_pts = [initial_points[i] for i in train_idx]
+    test_pts  = [initial_points[i] for i in test_idx]
+
+    # 1) Collect gradient history
+    x_hist, loss_hist, sign_hist = collect_gradient_history_with_curvature(
+        train_pts, f, grad_f, X, y,
+        max_iterations=max_steps,
+        base_lr=learning_rate,
+        curvature_smooth=curvature_smooth,
+        batch_size=batch_size,
+        random_state=random_state
+    )
+    best_i = np.argmin(loss_hist)
+    best_params, best_loss = x_hist[best_i], loss_hist[best_i]
+
+    # 2) Train time-series models
+    ts_models = (train_arma_model_with_curvature(sign_hist, p=arma_p, q=arma_q)
+                 if use_arma else
+                 train_ar_model_with_curvature(sign_hist, max_lag=ar_lag))
+
+    # 3) Predictive constrained SGD
+    enhanced = []
+    for pt in test_pts:
+        cur_pt   = np.array(pt, dtype=float)
+        cur_loss = f(cur_pt, X, y)
+        steps_left = max_steps
+
+        while steps_left > 0:
+            grad = grad_f(cur_pt, X, y)
+            signs, ahead = predict_next_signs_change_with_curvature(
+                ts_models, encode_gradient_sign(grad), max_steps=steps_left
+            )
+            steps_left -= ahead
+
+            lb, ub = determine_flip_region_with_curvature(
+                signs, ahead, cur_pt, region_step_size, grad
+            )
+            new_pt, new_loss = constrained_sgd_with_curvature(
+                f, grad_f, cur_pt, (lb, ub), X, y,
+                base_lr=learning_rate*ahead**0.5,
+                curvature_smooth=curvature_smooth,
+                max_steps=ahead,
+                batch_size=batch_size,
+                random_state=random_state
+            )
+            if new_loss < cur_loss - 1e-6:
+                cur_pt, cur_loss = new_pt, new_loss
+            else:
+                break
+
+        enhanced.append((cur_pt, cur_loss))
+
+    # 4) Choose best overall
+    if enhanced:
+        i_best = np.argmin([L for _, L in enhanced])
+        if enhanced[i_best][1] < best_loss:
+            best_params, best_loss = enhanced[i_best]
+
+    return best_params, best_loss
+
