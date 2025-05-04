@@ -1180,6 +1180,8 @@ def encode_gradient_sign(gradient, threshold=1e-6):
     signs[gradient > threshold] = 1
     return signs
 
+
+
 def collect_gradient_history(initial_points, f, grad_f, X, y,
                              max_iterations=1000,
                              learning_rate=0.01,
@@ -1189,7 +1191,7 @@ def collect_gradient_history(initial_points, f, grad_f, X, y,
     """
     Run (mini-batch) SGD from each point in `initial_points` and collect:
       - x_history:     all visited x
-      - loss_history:  all loss values
+      - loss_history:  all loss values 
       - gradient_signs_history: gradient-sign vectors at each step
 
     Returns:
@@ -1211,16 +1213,25 @@ def collect_gradient_history(initial_points, f, grad_f, X, y,
                 X_batch, y_batch = X, y
             else:
                 idx = rng.choice(n_samples, size=batch_size, replace=False)
-                X_batch, y_batch = X[idx], y[idx]
+                if isinstance(X, pd.DataFrame):
+                    X_batch = X.iloc[idx]
+                else:
+                    X_batch = X[idx]
+                if isinstance(y, pd.Series):
+                    y_batch = y.iloc[idx]
+                else:
+                    y_batch = y[idx]
             
-            # compute gradient and loss
+            # compute gradient (on mini-batch)
             gradient = grad_f(x, X_batch, y_batch)
-            loss = f(x, X_batch, y_batch)
             
+            # compute FULL loss (on full dataset!)
+            full_loss = f(x, X, y)
+
             # record history
             gradient_signs_history.append(encode_gradient_sign(gradient))
             x_history.append(x.copy())
-            loss_history.append(loss)
+            loss_history.append(full_loss)
             
             # step
             x_new = x - learning_rate * gradient
@@ -1230,6 +1241,7 @@ def collect_gradient_history(initial_points, f, grad_f, X, y,
             x = x_new
 
     return x_history, loss_history, gradient_signs_history
+
 
 def train_ar_model(sign_history, max_lag=3):
     """
@@ -1894,37 +1906,29 @@ def predictive_sgd_optimization_new(f, grad_f, X, y, initial_points, n_points=10
         current_point = start_point.copy()
         current_loss = f(current_point, X, y)
         current_region_step_size = region_step_size
-        
-        while max_steps>0:
-            # Calculate current gradient and its sign
+        local_max_steps = max_steps  # 每个start_point自己的局部max_steps
+
+        while local_max_steps > 0:
             current_gradient = grad_f(current_point, X, y)
             current_signs = encode_gradient_sign(current_gradient)
             
-            # Predict next gradient sign changes
-            predicted_signs,sign_num = predict_next_signs_change(ts_models, current_signs,max_steps) 
-
-            # update the max stpes
-            max_steps = max_steps - sign_num
-                                                      
+            predicted_signs, sign_num = predict_next_signs_change(ts_models, current_signs, local_max_steps)
+            local_max_steps -= sign_num
             
-            # Determine convex region based on predictions
             lower_bounds, upper_bounds = determine_flip_region(
-                predicted_signs,sign_num, current_point, current_region_step_size)
-            
-            # Run constrained SGD within the predicted region
+                predicted_signs, sign_num, current_point, current_region_step_size)
+
             new_point, new_loss = constrained_sgd_new(
-                f, grad_f, current_point, (lower_bounds, upper_bounds), 
+                f, grad_f, current_point, (lower_bounds, upper_bounds),
                 X, y, learning_rate, max_steps=sign_num, batch_size=batch_size, random_state=random_state)
-            
-            
-            # Check if we've improved
+
             if new_loss < current_loss - 1e-6:
                 current_point = new_point
                 current_loss = new_loss
-                # Reset step size if we found a better point
                 current_region_step_size = region_step_size
         
         enhanced_results.append((current_point, current_loss))
+
     
     # Step 5: Find the best result across all optimization runs
     
