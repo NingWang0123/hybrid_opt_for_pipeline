@@ -2003,9 +2003,12 @@ def example_usage():
     initial_points = generate_random_initial_points(n_points=5, n_params=n_params, random_state=42)
 
     methods = {
-        "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd_new(
-            X_df, y, initial_points, n_points=5, max_steps=50, batch_size=32, use_arma=True
-        ),
+
+        "Our Approach (v3)": lambda: optimize_pipeline_with_predictive_sgd_v3_hybrid(X_df, y, initial_points, max_steps=sgd_max_iterations,
+                                                                                      batch_size=32, use_arma=True),
+
+        "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd_v2_curvature(X_df, y, initial_points,
+                                                                                        max_steps=sgd_max_iterations, batch_size=32, use_arma=True),
         "Our Approach (v1)": lambda: optimize_full_pipeline(
             X_df, y, max_iterations=sgd_max_iterations, batch_size=32
         ),
@@ -2126,7 +2129,7 @@ if __name__ == "__main__":
    
     example_usage()
 
-# python py_files/regression.py
+# python py_files/regression_ver2.py
 
 
 ##### with curvature one 
@@ -2375,6 +2378,35 @@ def predictive_sgd_optimization_with_curvature(f, grad_f, X, y, initial_points,
 
 
 
+def optimize_pipeline_with_predictive_sgd_v2_curvature(X_train, y_train, initial_points,max_steps=1000, batch_size=32, use_arma=True):
+    """
+    Apply predictive SGD optimization to the pipeline with soft parameters.
+    """
+    # For the pipeline, we need 6 + n_features parameters
+    n_features = X_train.shape[1]
+    n_params = 6 + n_features  # 3 for imputation, 3 for scaling, n_features for regression
+    
+    # Run the optimization
+    best_params, best_loss = predictive_sgd_optimization_with_curvature(
+        f=pipeline_with_soft_parameters,
+        grad_f=pipeline_gradient,
+        X=X_train,
+        y=y_train,
+        initial_points=initial_points,
+        max_steps=max_steps,
+        use_arma=use_arma,
+        learning_rate=0.01,
+        region_step_size=1.0,
+        batch_size=batch_size
+    )
+    
+    # Interpret the parameters
+    interpretation = interpret_parameters(best_params, feature_names=X_train.columns)
+    
+    return best_params, best_loss, interpretation
+
+
+
 ###### v3 hybrid method
 
 def predict_all_next_signs_change_with_curvature(models, last_signs, max_steps=10):
@@ -2567,4 +2599,32 @@ def predictive_sgd_optimization_with_curvature_hybrid(
             best_params, best_loss = enhanced[i_best]
 
     return best_params, best_loss
+
+
+
+def optimize_pipeline_with_predictive_sgd_v3_hybrid(X_train, y_train, initial_points, max_steps=1000, batch_size=32, use_arma=True):
+    """
+    Apply predictive SGD optimization to the pipeline with soft parameters.
+    """
+    # For the pipeline, we need 6 + n_features parameters
+    n_features = X_train.shape[1]
+    
+    # Run the optimization
+    best_params, best_loss = predictive_sgd_optimization_with_curvature_hybrid(
+        f=pipeline_with_soft_parameters,
+        grad_f=pipeline_gradient,
+        X=X_train,
+        y=y_train,
+        initial_points=initial_points,
+        max_steps=max_steps,
+        use_arma=use_arma,
+        learning_rate=0.01,
+        region_step_size=1.0,
+        batch_size=batch_size
+    )
+    
+    # Interpret the parameters
+    interpretation = interpret_parameters(best_params, feature_names=X_train.columns)
+    
+    return best_params, best_loss, interpretation
 
