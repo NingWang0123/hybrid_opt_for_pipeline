@@ -675,12 +675,96 @@ def de_only_search(f, X, y, n_features, max_iterations=100):
        f_wrapper,
        bounds,
        maxiter=max_iterations,
-       #popsize=20,
-       #strategy='best1bin'
+       #popsize=25,
+       #strategy='best1bin',
+       #tol=1e-7, 
+       #mutation=(0.5, 1),
+       #recombination=0.7
    )
   
    return result.x, result.fun
 
+
+import cma
+
+def cma_es_search(f, X, y, n_features, max_iterations=100):
+    """
+    CMA-ES based global optimization for the pipeline.
+    
+    Parameters:
+    - f: Objective function (like pipeline_with_soft_parameters)
+    - X, y: Data
+    - n_features: Number of features in X
+    - max_iterations: Maximum generations (iterations)
+    
+    Returns:
+    - best_params: Best found parameters
+    - best_loss: Corresponding loss
+    """
+    # Define bounds
+    lower_bounds = [-10] * 6 + [-100] * n_features
+    upper_bounds = [10] * 6 + [100] * n_features
+    bounds = [lower_bounds, upper_bounds]
+    
+    def f_wrapper(beta):
+        return f(beta, X, y)
+    
+    # Initial guess: random near zero
+    x0 = np.random.uniform(-1, 1, size=len(lower_bounds))
+    sigma0 = 5.0  # Initial search radius
+    
+    # Run CMA-ES
+    es = cma.CMAEvolutionStrategy(
+        x0, sigma0,
+        {
+            'bounds': bounds,
+            'maxfevals': max_iterations * len(x0),  # max_iterations generations roughly
+            'verb_disp': 0  # no printing
+        }
+    )
+    
+    es.optimize(f_wrapper)
+    
+    best_params = es.result.xbest
+    best_loss = es.result.fbest
+    
+    return best_params, best_loss
+
+
+from pyswarm import pso
+
+def pso_search(f, X, y, n_features, max_iterations=100):
+    """
+    Particle Swarm Optimization (PSO) for the pipeline.
+    
+    Parameters:
+    - f: Objective function
+    - X, y: Data
+    - n_features: Number of features in X
+    - max_iterations: Maximum generations
+    
+    Returns:
+    - best_params: Best found parameters
+    - best_loss: Corresponding loss
+    """
+    # Define bounds
+    lower_bounds = [-10] * 6 + [-100] * n_features
+    upper_bounds = [10] * 6 + [100] * n_features
+    
+    def f_wrapper(beta):
+        return f(beta, X, y)
+    
+    # Run PSO
+    best_params, best_loss = pso(
+        f_wrapper,
+        lb=lower_bounds,
+        ub=upper_bounds,
+        maxiter=max_iterations,
+        swarmsize=50,  # Number of particles
+        debug=False
+    )
+    
+    return best_params, best_loss
 
 
 
@@ -1931,6 +2015,12 @@ def example_usage():
             X_df, y, iterations=sgd_max_iterations, batch_size=32
         ),
         "Differential Evolution": lambda: de_only_search(
+            pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
+        ),
+        "CMA-ES": lambda: cma_es_search(
+            pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
+        ),
+        "PSO": lambda: pso_search(
             pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
         )
     }
