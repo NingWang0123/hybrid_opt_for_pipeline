@@ -138,6 +138,121 @@ def nonconvex_hessian_f(beta, X, y):
    return H
 
 
+def nonconvex_f(beta, X, y, c=1.0):
+    """
+    Non-convex Cauchy loss.
+    Uses dot product for multi-dimensional beta.
+    c: scale parameter controlling the “flatness” of the tails.
+    """
+    residual = y - np.dot(X, beta)
+    residual_sq = residual**2
+    cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
+    return cost
+
+def nonconvex_grad_f(beta, X, y, c=1.0):
+    """
+    Gradient of the non-convex Cauchy loss.
+    Computes the gradient with respect to beta.
+    """
+    residual = y - np.dot(X, beta)
+    residual_sq = residual**2
+    # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
+    factor = residual / (1 + residual_sq / c**2)
+    gradient = -np.dot(X.T, factor)
+    return gradient
+
+def nonconvex_hessian_f(beta, X, y, c=1.0):
+    """
+    Hessian of the non-convex Cauchy loss.
+    Computes a 2D Hessian matrix.
+    """
+    residual = y - np.dot(X, beta)
+    residual_sq = residual**2
+    # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
+    factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
+    H = np.dot(X.T, X * factor[:, np.newaxis])
+    return H
+
+
+# Welsch loss
+# def nonconvex_f(beta, X, y, c=1.0):
+#     """
+#     Non-convex Welsch (exponential) loss.
+#     Uses dot product for multi-dimensional beta.
+#     c: scale parameter controlling down-weighting of large residuals.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     cost = 0.5 * c**2 * np.sum(1 - np.exp(-residual_sq / c**2))
+#     return cost
+
+# def nonconvex_grad_f(beta, X, y, c=1.0):
+#     """
+#     Gradient of the non-convex Welsch loss.
+#     Computes the gradient with respect to beta.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     # d/dr [0.5 c^2 (1 - exp(-r^2/c^2))] = r * exp(-r^2/c^2)
+#     factor = residual * np.exp(-residual_sq / c**2)
+#     gradient = -np.dot(X.T, factor)
+#     return gradient
+
+# def nonconvex_hessian_f(beta, X, y, c=1.0):
+#     """
+#     Hessian of the non-convex Welsch loss.
+#     Computes a 2D Hessian matrix.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     # d/dr [r e^{-r^2/c^2}] = e^{-r^2/c^2} * (1 - 2r^2/c^2)
+#     factor = np.exp(-residual_sq / c**2) * (1 - 2 * residual_sq / c**2)
+#     H = np.dot(X.T, X * factor[:, np.newaxis])
+#     return H
+
+# def nonconvex_f(beta, X, y, c=4.685):
+#     """
+#     Tukey’s biweight (bisquare) loss.
+#     - Non-convex overall, but convex for |residual| small.
+#     - c: tuning constant (≈4.685 gives 95% efficiency under Gaussian noise).
+#     """
+#     residual = y - np.dot(X, beta)
+#     w = residual**2 / c**2
+#     # loss_i = (c^2/6) [1 - (1 - w)^3]   if w <= 1,   else c^2/6
+#     mask = w <= 1
+#     loss = np.empty_like(residual)
+#     loss[mask]   = c**2/6 * (1 - (1 - w[mask])**3)
+#     loss[~mask]  = c**2/6
+#     return np.sum(loss)
+
+# def nonconvex_grad_f(beta, X, y, c=4.685):
+#     """
+#     Gradient of Tukey’s biweight loss.
+#     ∂/∂r  loss_i = r * (1 - w)^2  for w<=1,  else 0
+#     """
+#     residual = y - np.dot(X, beta)
+#     w = residual**2 / c**2
+#     mask = w <= 1
+#     psi = np.zeros_like(residual)
+#     psi[mask] = residual[mask] * (1 - w[mask])**2
+#     # gradient = - X^T psi
+#     return -np.dot(X.T, psi)
+
+# def nonconvex_hessian_f(beta, X, y, c=4.685):
+#     """
+#     Hessian of Tukey’s biweight loss.
+#     ∂/∂r [r (1 - w)^2] = (1 - w)*(1 - 5w)  for w<=1,  else 0
+#     """
+#     residual = y - np.dot(X, beta)
+#     w = residual**2 / c**2
+#     mask = w <= 1
+#     factor = np.zeros_like(residual)
+#     factor[mask] = (1 - w[mask]) * (1 - 5*w[mask])
+#     # H = X^T diag(factor) X
+#     return np.dot(X.T, X * factor[:, np.newaxis])
+
+
+
 
 
 # ==================== Optimization Utilities ====================
@@ -2165,7 +2280,7 @@ def collect_gradient_history_with_curvature(
     return x_history, loss_history, gradient_signs_history
 
 
-def optimize_pipeline_with_predictive_sgd_v2_curvature(X_train, y_train, initial_points,max_steps=1000, batch_size=32, use_arma=True):
+def optimize_pipeline_with_predictive_sgd_v2_curvature(X_train, y_train, initial_points,max_steps=1000, batch_size=32, use_arma=False):
     """
     Apply predictive SGD optimization to the pipeline with soft parameters.
     """
@@ -2294,13 +2409,13 @@ def predictive_sgd_optimization_with_curvature_hybrid(
     f, grad_f, hessian_f, X, y, initial_points,
     learning_rate=0.01, curvature_smooth=1.0,
     max_steps=100, ar_lag=3, arma_p=3, arma_q=1,
-    region_step_size=1.0, use_arma=True,
+    region_step_size=2.0, use_arma=True,
     training_frac=0.3, batch_size=None,
     random_state=42
 ):
     # Split into training/test initial points
     n_pts = len(initial_points)
-    k = int(n_pts * training_frac)
+    k = max(1, int(n_pts * training_frac)) 
     all_idx = list(range(n_pts))
     rnd = random.Random(random_state)
     train_idx = rnd.sample(all_idx, k)
@@ -2363,7 +2478,7 @@ def predictive_sgd_optimization_with_curvature_hybrid(
             lb, ub = determine_flip_region_with_curvature(
                 signs, ahead, cur_pt, region_step_size, init_grad
             )
-            scaled_lr = learning_rate * np.sqrt(ahead) * np.sqrt(prob)
+            scaled_lr = learning_rate * np.log1p(ahead) * np.sqrt(prob)
             new_pt, new_loss = constrained_sgd_with_curvature(
                 f, grad_f, cur_pt, (lb, ub), X, y,
                 base_lr=scaled_lr,
@@ -2395,7 +2510,7 @@ def predictive_sgd_optimization_with_curvature_hybrid(
                     signs_o, span_o, cur_pt, region_step_size, init_grad
                 )
                 x_de, loss_de = de_search_method_for_hybrid(
-                    f, (lb_o, ub_o), X, y, maxiters=100
+                    f, (lb_o, ub_o), X, y, maxiters=int(10 * non_convex_prob)
                 )
                 cur_pt = x_de
                 enhanced.append((x_de, loss_de))
@@ -2513,15 +2628,15 @@ def predictive_sgd_optimization_with_curvature(
     learning_rate=0.01, curvature_smooth=1.0,
     max_steps=100, ar_lag=3,
     arma_p=3, arma_q=1,
-    region_step_size=1.0,
-    use_arma=True,
+    region_step_size=2.0,
+    use_arma=False,
     training_frac=0.3,
     batch_size=None,
     random_state=42
 ):
     # 1) split initial_points into train/test
     n_pts = len(initial_points)
-    k = int(n_pts * training_frac)
+    k = max(1, int(n_pts * training_frac)) 
     all_idx = list(range(n_pts))
     rnd = random.Random(random_state)
     train_idx = rnd.sample(all_idx, k)
@@ -2533,7 +2648,7 @@ def predictive_sgd_optimization_with_curvature(
     x_hist, loss_hist, sign_hist = collect_gradient_history_with_curvature(
         train_pts, f, grad_f, X, y,
         max_iterations=max_steps,
-        base_lr=learning_rate,
+        base_lr=learning_rate*50,
         curvature_smooth=curvature_smooth,
         batch_size=batch_size,
         random_state=random_state
@@ -2571,7 +2686,7 @@ def predictive_sgd_optimization_with_curvature(
             new_pt, new_loss = constrained_sgd_with_curvature(
                 f, grad_f, cur_pt, (lb, ub),
                 X, y,
-                base_lr=learning_rate * np.sqrt(ahead),
+                base_lr=learning_rate * np.log1p(ahead),
                 curvature_smooth=curvature_smooth,
                 max_steps=ahead,
                 batch_size=batch_size,
@@ -2595,6 +2710,14 @@ def predictive_sgd_optimization_with_curvature(
 
 
 
+def generate_random_initial_points(n_points, n_params, lower=-100, upper=100, random_state=None):
+    """
+    Generate random initial points within specified bounds.
+    """
+    if random_state is not None:
+        np.random.seed(random_state)
+    return [lower + (upper - lower) * np.random.rand(n_params) for _ in range(n_points)]
+
 # -------------------------------------------------------------------
 # Example usage & comparison loop
 # -------------------------------------------------------------------
@@ -2610,23 +2733,23 @@ def example_usage():
 
     methods = {
         "Our Approach (v3)": lambda: optimize_pipeline_with_predictive_sgd_v3_hybrid(
-            X_df, y, initial_points, max_steps=1000, batch_size=32, use_arma=True
+            X_df, y, initial_points, max_steps=100, batch_size=32, use_arma=False
         ),
         "Our Approach (v2)": lambda: optimize_pipeline_with_predictive_sgd_v2_curvature(
-            X_df, y, initial_points, max_steps=1000, batch_size=32, use_arma=True
+            X_df, y, initial_points, max_steps=100, batch_size=32, use_arma=False
         ),
         "Our Approach (v1)": lambda: optimize_full_pipeline(
-            X_df, y, max_iterations=1000, batch_size=32
+            X_df, y, max_iterations=100, batch_size=32
         ),
         "Standard SGD": lambda: get_all_results_from_std_sgd(
             pipeline_with_soft_parameters, pipeline_gradient,
-            X_df, y, initial_points, max_steps=1000, batch_size=32
+            X_df, y, initial_points, max_steps=100, batch_size=32
         ),
         "SGD with Bound": lambda: sgd_with_bound(
             pipeline_with_soft_parameters, pipeline_gradient,
             np.random.randn(n_features + 6),
             np.ones(n_features + 6) * np.inf,
-            X_df, y, iterations=1000, batch_size=32
+            X_df, y, iterations=100, batch_size=32
         ),
         "Differential Evolution": lambda: de_only_search(
             pipeline_with_soft_parameters, X_df, y, n_features, max_iterations=100
