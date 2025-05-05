@@ -138,40 +138,40 @@ def nonconvex_hessian_f(beta, X, y):
    return H
 
 
-def nonconvex_f(beta, X, y, c=1.0):
-    """
-    Non-convex Cauchy loss.
-    Uses dot product for multi-dimensional beta.
-    c: scale parameter controlling the “flatness” of the tails.
-    """
-    residual = y - np.dot(X, beta)
-    residual_sq = residual**2
-    cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
-    return cost
+# def nonconvex_f(beta, X, y, c=1.0):
+#     """
+#     Non-convex Cauchy loss.
+#     Uses dot product for multi-dimensional beta.
+#     c: scale parameter controlling the “flatness” of the tails.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
+#     return cost
 
-def nonconvex_grad_f(beta, X, y, c=1.0):
-    """
-    Gradient of the non-convex Cauchy loss.
-    Computes the gradient with respect to beta.
-    """
-    residual = y - np.dot(X, beta)
-    residual_sq = residual**2
-    # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
-    factor = residual / (1 + residual_sq / c**2)
-    gradient = -np.dot(X.T, factor)
-    return gradient
+# def nonconvex_grad_f(beta, X, y, c=1.0):
+#     """
+#     Gradient of the non-convex Cauchy loss.
+#     Computes the gradient with respect to beta.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
+#     factor = residual / (1 + residual_sq / c**2)
+#     gradient = -np.dot(X.T, factor)
+#     return gradient
 
-def nonconvex_hessian_f(beta, X, y, c=1.0):
-    """
-    Hessian of the non-convex Cauchy loss.
-    Computes a 2D Hessian matrix.
-    """
-    residual = y - np.dot(X, beta)
-    residual_sq = residual**2
-    # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
-    factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
-    H = np.dot(X.T, X * factor[:, np.newaxis])
-    return H
+# def nonconvex_hessian_f(beta, X, y, c=1.0):
+#     """
+#     Hessian of the non-convex Cauchy loss.
+#     Computes a 2D Hessian matrix.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
+#     factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
+#     H = np.dot(X.T, X * factor[:, np.newaxis])
+#     return H
 
 
 # Welsch loss
@@ -667,6 +667,110 @@ def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
            hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon * epsilon)
   
    return hessian
+
+
+def _compute_pipeline_output(params, X_raw):
+    """
+    Helper to compute the final design matrix X_final and regression_params.
+    """
+    # Ensure DataFrame
+    X_df = pd.DataFrame(X_raw) if not isinstance(X_raw, pd.DataFrame) else X_raw.copy()
+
+    # Soft parameters
+    impute_weights = softmax(params[0:3])
+    scale_weights = softmax(params[3:6])
+    regression_params = params[6:]
+
+    # Imputation
+    X_imp_mean   = impute_na_values(X_df, method='mean')
+    X_imp_median = impute_na_values(X_df, method='median')
+    X_imp_knn    = impute_na_values(X_df, method='knn')
+    X_imputed = (
+        impute_weights[0] * X_imp_mean.values +
+        impute_weights[1] * X_imp_median.values +
+        impute_weights[2] * X_imp_knn.values
+    )
+    X_imputed = pd.DataFrame(X_imputed, columns=X_df.columns)
+
+    # Scaling
+    X_std   = standard_scale_df(X_imputed)
+    X_mm    = minmax_scale_df(X_imputed)
+    X_maxab = maxabs_scale_df(X_imputed)
+    X_scaled = (
+        scale_weights[0] * X_std.values +
+        scale_weights[1] * X_mm.values +
+        scale_weights[2] * X_maxab.values
+    )
+    X_scaled = pd.DataFrame(X_scaled, columns=X_df.columns)
+
+    return regression_params, X_scaled.values
+
+def pipeline_with_soft_parameters(params, X_raw, y):
+    """
+    Full pipeline ending in nonconvex_f.
+    """
+    regression_params, X_final = _compute_pipeline_output(params, X_raw)
+    return nonconvex_f(regression_params, X_final, y)
+
+def pipeline_gradient(params, X_raw, y, epsilon=1e-6):
+    """
+    Gradient using:
+    - nonconvex_grad_f for regression block
+    - numerical central diff + nonconvex_f for soft parameters
+    """
+    n = len(params)
+    grad = np.zeros(n)
+
+    # Forward pass for analytic part
+    regression_params, X_final = _compute_pipeline_output(params, X_raw)
+    # Analytical gradient for regression block
+    grad[6:] = nonconvex_grad_f(regression_params, X_final, y)
+
+    # Numerical for soft parameters
+    for i in range(6):
+        p_plus = params.copy();  p_plus[i] += epsilon
+        p_minus = params.copy(); p_minus[i] -= epsilon
+        rp_plus, X_plus = _compute_pipeline_output(p_plus, X_raw)
+        rp_minus, X_minus = _compute_pipeline_output(p_minus, X_raw)
+        f_plus  = nonconvex_f(rp_plus, X_plus, y)
+        f_minus = nonconvex_f(rp_minus, X_minus, y)
+        grad[i] = (f_plus - f_minus) / (2 * epsilon)
+
+    return grad
+
+def pipeline_hessian(params, X_raw, y, epsilon=1e-5):
+    """
+    Hessian using:
+    - nonconvex_hessian_f for regression block
+    - numerical central diff + nonconvex_f for other entries
+    """
+    n = len(params)
+    hessian = np.zeros((n, n))
+
+    # Compute analytic Hessian block
+    regression_params, X_final = _compute_pipeline_output(params, X_raw)
+    hessian[6:, 6:] = nonconvex_hessian_f(regression_params, X_final, y)
+
+    # Numerical for soft and cross-terms
+    for i in range(6):
+        for j in range(n):
+            pp = params.copy(); pp[i] += epsilon; pp[j] += epsilon
+            pm = params.copy(); pm[i] += epsilon; pm[j] -= epsilon
+            mp = params.copy(); mp[i] -= epsilon; mp[j] += epsilon
+            mm = params.copy(); mm[i] -= epsilon; mm[j] -= epsilon
+            rp_pp, X_pp = _compute_pipeline_output(pp, X_raw)
+            rp_pm, X_pm = _compute_pipeline_output(pm, X_raw)
+            rp_mp, X_mp = _compute_pipeline_output(mp, X_raw)
+            rp_mm, X_mm = _compute_pipeline_output(mm, X_raw)
+            f_pp = nonconvex_f(rp_pp, X_pp, y)
+            f_pm = nonconvex_f(rp_pm, X_pm, y)
+            f_mp = nonconvex_f(rp_mp, X_mp, y)
+            f_mm = nonconvex_f(rp_mm, X_mm, y)
+            hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * epsilon**2)
+            hessian[j, i] = hessian[i, j]
+
+    return hessian
+
 
 
 
