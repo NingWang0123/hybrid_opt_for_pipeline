@@ -49,8 +49,8 @@ def california_housing():
 
     X_df = pd.DataFrame(data.data, columns=data.feature_names)
     y_df = pd.DataFrame(data.target, columns=['Target'])
-    X_df = X_df.iloc[:500]
-    y_df = y_df.iloc[:500]
+    X_df = X_df.iloc[0:500]
+    y_df = y_df.iloc[0:500]
 
     california_df = pd.concat([X_df, y_df], axis=1)
 
@@ -2886,7 +2886,7 @@ def example_usage():
 
 if __name__ == "__main__":
     # load one of: diabetes, california_housing, regression, friedman1
-    dataset = 'diabetes'
+    dataset = 'california_housing'
     if dataset == 'diabetes':
         X_train, X_test, y_train, y_test = diabetes()
     elif dataset == 'california_housing':
