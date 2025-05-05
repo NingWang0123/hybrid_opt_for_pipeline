@@ -779,8 +779,8 @@ def de_only_search(f, X, y, n_features, max_iterations=100):
    Differential evolution only, without SGD refinement.
    """
    # Define bounds
-   lower_bounds = [-10] * 6 + [-100] * n_features
-   upper_bounds = [10] * 6 + [100] * n_features
+   lower_bounds = [-100] * 6 + [-100] * n_features
+   upper_bounds = [100] * 6 + [100] * n_features
    bounds = rearrange_bounds((lower_bounds, upper_bounds))
   
    def f_wrapper(beta):
@@ -790,7 +790,7 @@ def de_only_search(f, X, y, n_features, max_iterations=100):
        f_wrapper,
        bounds,
        maxiter=max_iterations,
-       #popsize=25,
+       popsize=100,
        #strategy='best1bin',
        #tol=1e-7, 
        #mutation=(0.5, 1),
@@ -2496,8 +2496,9 @@ def predictive_sgd_optimization_with_curvature_hybrid(
             for i, (signs_o, span_o) in enumerate(zip(sign_lists, spans)):
                 if i == best_region:
                     continue
+                # fix spans
                 lb_o, ub_o = determine_flip_region_with_curvature(
-                    signs_o, span_o, cur_pt, region_step_size, init_grad
+                    signs_o, 10, cur_pt, region_step_size, init_grad
                 )
                 x_de, loss_de = de_search_method_for_hybrid(
                     f, (lb_o, ub_o), X, y, maxiters=de_iters
@@ -2506,8 +2507,9 @@ def predictive_sgd_optimization_with_curvature_hybrid(
         else:
             # if not convex: just run DE on all regions
             for signs_o, span_o in zip(sign_lists, spans):
+                # fix spans
                 lb_o, ub_o = determine_flip_region_with_curvature(
-                    signs_o, span_o, cur_pt, region_step_size, init_grad
+                    signs_o, 10, cur_pt, region_step_size, init_grad
                 )
                 x_de, loss_de = de_search_method_for_hybrid(
                     f, (lb_o, ub_o), X, y, maxiters=int(10 * non_convex_prob)
