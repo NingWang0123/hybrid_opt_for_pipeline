@@ -938,6 +938,7 @@ def cma_es_search(f, X, y, n_features, max_iterations=100):
         {
             'bounds': bounds,
             'maxfevals': max_iterations * len(x0),  # max_iterations generations roughly
+            'popsize': 30000,
             'verb_disp': 0  # no printing
         }
     )
@@ -979,7 +980,7 @@ def pso_search(f, X, y, n_features, max_iterations=100):
         lb=lower_bounds,
         ub=upper_bounds,
         maxiter=max_iterations,
-        swarmsize=50,  # Number of particles
+        swarmsize=300,  # Number of particles
         debug=False
     )
     
