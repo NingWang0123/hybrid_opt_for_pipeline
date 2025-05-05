@@ -1090,148 +1090,135 @@ def interpret_parameters(params, feature_names=None):
 
 
 def plot_optimization_results(results, true_beta=None):
-   """
-   Create visualizations for the optimization results comparison.
-  
-   Parameters:
-   - results: Dictionary of optimization results
-   - true_beta: Optional array of true regression coefficients for comparison
-   """
-   import matplotlib.pyplot as plt
-   import matplotlib
-   matplotlib.use('Agg')  # Use non-interactive backend
-  
-   # Filter successful methods
-   successful_methods = {k: v for k, v in results.items() if v["success"]}
-  
-   if not successful_methods:
-       print("No successful optimization methods to plot.")
-       return
-  
-   # Create figure with multiple subplots
-   fig = plt.figure(figsize=(16, 12))
-  
-   # 1. Performance Comparison - Time vs Loss
-   ax1 = fig.add_subplot(2, 2, 1)
-   methods = list(successful_methods.keys())
-   times = [successful_methods[m]["time"] for m in methods]
-   losses = [successful_methods[m]["loss"] for m in methods]
-  
-   # Create scatter plot
-   sc = ax1.scatter(times, losses, s=100, c=range(len(methods)), cmap='viridis', alpha=0.7)
-  
-   # Add method labels
-   for i, method in enumerate(methods):
-       ax1.annotate(method, (times[i], losses[i]), fontsize=9,
-                   xytext=(5, 5), textcoords='offset points')
-  
-   ax1.set_xlabel('Execution Time (seconds)')
-   ax1.set_ylabel('Loss Value')
-   ax1.set_title('Optimization Performance: Time vs. Loss')
-   ax1.grid(True, linestyle='--', alpha=0.7)
-  
-   # 2. Bar chart comparing times
-   ax2 = fig.add_subplot(2, 2, 2)
-   colors = plt.cm.viridis(np.linspace(0, 1, len(methods)))
-   bars = ax2.bar(methods, times, color=colors, alpha=0.7)
-   ax2.set_xlabel('Method')
-   ax2.set_ylabel('Time (seconds)')
-   ax2.set_title('Execution Time Comparison')
-   ax2.set_xticklabels(methods, rotation=45, ha='right')
-   ax2.grid(True, axis='y', linestyle='--', alpha=0.7)
-  
-   # Add time values on top of bars
-   for bar in bars:
-       height = bar.get_height()
-       ax2.annotate(f'{height:.2f}',
-                   xy=(bar.get_x() + bar.get_width() / 2, height),
-                   xytext=(0, 3),  # 3 points vertical offset
-                   textcoords="offset points",
-                   ha='center', va='bottom')
-  
-   # 3. Bar chart comparing losses
-   ax3 = fig.add_subplot(2, 2, 3)
-   bars = ax3.bar(methods, losses, color=colors, alpha=0.7)
-   ax3.set_xlabel('Method')
-   ax3.set_ylabel('Loss Value')
-   ax3.set_title('Loss Value Comparison')
-   ax3.set_xticklabels(methods, rotation=45, ha='right')
-   ax3.grid(True, axis='y', linestyle='--', alpha=0.7)
-  
-   # Add loss values on top of bars
-   for bar in bars:
-       height = bar.get_height()
-       ax3.annotate(f'{height:.4f}',
-                   xy=(bar.get_x() + bar.get_width() / 2, height),
-                   xytext=(0, 3),  # 3 points vertical offset
-                   textcoords="offset points",
-                   ha='center', va='bottom')
-  
-   # 4. Parameter comparison for best method
-   ax4 = fig.add_subplot(2, 2, 4)
-   best_method = min(successful_methods.keys(), key=lambda m: successful_methods[m]["loss"])
-   best_params = successful_methods[best_method]["params"]
-  
-   # Get interpretation of best params
-   best_interpretation = interpret_parameters(best_params)
-  
-   # Plot regression coefficients
-   reg_coefs = list(best_interpretation["regression"].values())
-   feature_names = list(best_interpretation["regression"].keys())
-  
-   y_pos = np.arange(len(feature_names))
-   ax4.barh(y_pos, reg_coefs, color='skyblue', alpha=0.7)
-  
-   # If true coefficients are provided, overlay them
-   if true_beta is not None:
-       ax4.barh(y_pos, true_beta, color='red', alpha=0.3, label='True Coefficients')
-       ax4.legend()
-  
-   ax4.set_yticks(y_pos)
-   ax4.set_yticklabels(feature_names)
-   ax4.set_xlabel('Coefficient Value')
-   ax4.set_title(f'Regression Coefficients ({best_method})')
-   ax4.grid(True, axis='x', linestyle='--', alpha=0.7)
-  
-   # Add a title for the entire figure
-   fig.suptitle('Optimization Methods Comparison', fontsize=16)
-   plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout for the suptitle
-  
-   # Save the figure
-   fig.savefig('optimization_comparison.png', dpi=300, bbox_inches='tight')
-   plt.close(fig)
-  
-   # Create another figure for imputation and scaling weights
-   fig2 = plt.figure(figsize=(14, 6))
-  
-   # 1. Imputation weights
-   ax5 = fig2.add_subplot(1, 2, 1)
-   imp_methods = list(best_interpretation["imputation"].keys())
-   imp_weights = list(best_interpretation["imputation"].values())
-  
-   ax5.pie(imp_weights, labels=imp_methods, autopct='%1.1f%%', startangle=90,
-          colors=plt.cm.Blues(np.linspace(0.3, 0.7, len(imp_methods))))
-   ax5.set_title(f'Imputation Method Weights ({best_method})')
-  
-   # 2. Scaling weights
-   ax6 = fig2.add_subplot(1, 2, 2)
-   scale_methods = list(best_interpretation["scaling"].keys())
-   scale_weights = list(best_interpretation["scaling"].values())
-  
-   ax6.pie(scale_weights, labels=scale_methods, autopct='%1.1f%%', startangle=90,
-          colors=plt.cm.Greens(np.linspace(0.3, 0.7, len(scale_methods))))
-   ax6.set_title(f'Scaling Method Weights ({best_method})')
-  
-   fig2.suptitle('Soft Parameter Weights for Best Method', fontsize=16)
-   plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout for the suptitle
-  
-   # Save the second figure
-   fig2.savefig('weights_comparison.png', dpi=300, bbox_inches='tight')
-   plt.close(fig2)
-  
-   print("Plots saved as 'optimization_comparison.png' and 'weights_comparison.png'")
-  
-   return True
+    """
+    Create visualizations for the optimization results comparison.
+
+    Parameters:
+    - results: Dictionary of optimization results
+    - true_beta: Optional array of true regression coefficients for comparison
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib
+    import numpy as np
+    matplotlib.use('Agg')  # Use non-interactive backend
+
+    successful_methods = {k: v for k, v in results.items() if v["success"]}
+    if not successful_methods:
+        print("No successful optimization methods to plot.")
+        return
+
+    # === (1) First big comparison figure ===
+    fig = plt.figure(figsize=(16, 12))
+
+    methods = list(successful_methods.keys())
+    times = [successful_methods[m]["time"] for m in methods]
+    losses = [successful_methods[m]["loss"] for m in methods]
+
+    # 1.1 Scatter Time vs Loss
+    ax1 = fig.add_subplot(2, 2, 1)
+    sc = ax1.scatter(times, losses, s=100, c=range(len(methods)), cmap='viridis', alpha=0.7)
+    for i, method in enumerate(methods):
+        ax1.annotate(method, (times[i], losses[i]), fontsize=9,
+                     xytext=(5, 5), textcoords='offset points')
+    ax1.set_xlabel('Execution Time (seconds)')
+    ax1.set_ylabel('Loss Value')
+    ax1.set_title('Optimization Performance: Time vs. Loss')
+    ax1.grid(True, linestyle='--', alpha=0.7)
+
+    # 1.2 Barplot of Time
+    ax2 = fig.add_subplot(2, 2, 2)
+    colors = plt.cm.viridis(np.linspace(0, 1, len(methods)))
+    bars = ax2.bar(methods, times, color=colors, alpha=0.7)
+    ax2.set_xlabel('Method')
+    ax2.set_ylabel('Time (seconds)')
+    ax2.set_title('Execution Time Comparison')
+    ax2.set_xticklabels(methods, rotation=45, ha='right')
+    ax2.grid(True, axis='y', linestyle='--', alpha=0.7)
+    for bar in bars:
+        height = bar.get_height()
+        ax2.annotate(f'{height:.2f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                     xytext=(0, 3), textcoords="offset points",
+                     ha='center', va='bottom')
+
+    # 1.3 Barplot of Loss
+    ax3 = fig.add_subplot(2, 2, 3)
+    bars = ax3.bar(methods, losses, color=colors, alpha=0.7)
+    ax3.set_xlabel('Method')
+    ax3.set_ylabel('Loss Value')
+    ax3.set_title('Loss Value Comparison')
+    ax3.set_xticklabels(methods, rotation=45, ha='right')
+    ax3.grid(True, axis='y', linestyle='--', alpha=0.7)
+    for bar in bars:
+        height = bar.get_height()
+        ax3.annotate(f'{height:.4f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                     xytext=(0, 3), textcoords="offset points",
+                     ha='center', va='bottom')
+
+    fig.suptitle('Optimization Methods Comparison', fontsize=16)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig('optimization_comparison_overall.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+    print("Saved: optimization_comparison_overall.png")
+
+    # === (2) Now separately plot for each method that has interpretation ===
+    for method_name, method_result in successful_methods.items():
+        interp = method_result.get('interp', None)
+
+        # Try interpreting if missing
+        if interp is None:
+            try:
+                interp = interpret_parameters(method_result["params"])
+            except Exception as e:
+                print(f"Warning: Cannot interpret parameters for {method_name}: {e}")
+                continue  # skip this method
+
+        # Now we plot separately for this method
+        fig, axs = plt.subplots(1, 3, figsize=(20, 6))
+
+        # 2.1 Regression Coefficients
+        reg_coefs = list(interp['regression'].values())
+        feature_names = list(interp['regression'].keys())
+        y_pos = np.arange(len(feature_names))
+
+        axs[0].barh(y_pos, reg_coefs, color='skyblue', alpha=0.8)
+        if true_beta is not None and len(true_beta) == len(reg_coefs):
+            axs[0].barh(y_pos, true_beta, color='red', alpha=0.3, label='True Coefficients')
+            axs[0].legend()
+
+        axs[0].set_yticks(y_pos)
+        axs[0].set_yticklabels(feature_names)
+        axs[0].set_xlabel('Coefficient Value')
+        axs[0].set_title(f'Regression Coefficients ({method_name})')
+        axs[0].grid(True, axis='x', linestyle='--', alpha=0.7)
+
+        # 2.2 Imputation Weights
+        imp_methods = list(interp['imputation'].keys())
+        imp_weights = list(interp['imputation'].values())
+
+        axs[1].pie(imp_weights, labels=imp_methods, autopct='%1.1f%%', startangle=90,
+                   colors=plt.cm.Blues(np.linspace(0.3, 0.7, len(imp_methods))))
+        axs[1].set_title('Imputation Method Weights')
+
+        # 2.3 Scaling Weights
+        scale_methods = list(interp['scaling'].keys())
+        scale_weights = list(interp['scaling'].values())
+
+        axs[2].pie(scale_weights, labels=scale_methods, autopct='%1.1f%%', startangle=90,
+                   colors=plt.cm.Greens(np.linspace(0.3, 0.7, len(scale_methods))))
+        axs[2].set_title('Scaling Method Weights')
+
+        fig.suptitle(f'Parameter Interpretations for {method_name}', fontsize=18)
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+
+        save_name = f'interpretation_{method_name.replace(" ", "_")}.png'
+        fig.savefig(save_name, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+        print(f"Saved: {save_name}")
+
+    return True
+
 
 
 
