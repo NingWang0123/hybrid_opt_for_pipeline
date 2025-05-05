@@ -137,41 +137,41 @@ def nonconvex_hessian_f(beta, X, y):
 
 
 
-def nonconvex_f(beta, X, y, c=1.0):
-    """
-    Non-convex Cauchy loss.
-    Uses dot product for multi-dimensional beta.
-    c: scale parameter controlling the “flatness” of the tails.
-    """
-    residual = y - np.dot(X, beta)
-    residual_sq = residual**2
-    cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
-    return cost
+# def nonconvex_f(beta, X, y, c=1.0):
+#     """
+#     Non-convex Cauchy loss.
+#     Uses dot product for multi-dimensional beta.
+#     c: scale parameter controlling the “flatness” of the tails.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
+#     return cost
 
-def nonconvex_grad_f(beta, X, y, c=1.0):
-    """
-    Gradient of the non-convex Cauchy loss.
-    Computes the gradient with respect to beta.
-    """
-    residual = y - np.dot(X, beta)
-    residual_sq = residual**2
-    # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
-    factor = residual / (1 + residual_sq / c**2)
-    gradient = -np.dot(X.T, factor)
-    return gradient
+# def nonconvex_grad_f(beta, X, y, c=1.0):
+#     """
+#     Gradient of the non-convex Cauchy loss.
+#     Computes the gradient with respect to beta.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
+#     factor = residual / (1 + residual_sq / c**2)
+#     gradient = -np.dot(X.T, factor)
+#     return gradient
 
-def nonconvex_hessian_f(beta, X, y, c=1.0):
-    """
-    Hessian of the non-convex Cauchy loss.
-    Computes a 2D Hessian matrix.
-    """
-    residual = y - np.dot(X, beta)
-    residual_sq = residual**2
-    # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
-    factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
-    factor = np.asarray(factor)  # <-- 加这一行！
-    H = np.dot(X.T, X * factor[:, np.newaxis])
-    return H
+# def nonconvex_hessian_f(beta, X, y, c=1.0):
+#     """
+#     Hessian of the non-convex Cauchy loss.
+#     Computes a 2D Hessian matrix.
+#     """
+#     residual = y - np.dot(X, beta)
+#     residual_sq = residual**2
+#     # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
+#     factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
+#     factor = np.asarray(factor)  # <-- 加这一行！
+#     H = np.dot(X.T, X * factor[:, np.newaxis])
+#     return H
 
 
 
@@ -2886,7 +2886,7 @@ def example_usage():
 
 if __name__ == "__main__":
     # load one of: diabetes, california_housing, regression, friedman1
-    dataset = 'california_housing'
+    dataset = 'regression'
     if dataset == 'diabetes':
         X_train, X_test, y_train, y_test = diabetes()
     elif dataset == 'california_housing':
