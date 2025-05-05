@@ -817,8 +817,8 @@ def cma_es_search(f, X, y, n_features, max_iterations=100):
     - best_loss: Corresponding loss
     """
     # Define bounds
-    lower_bounds = [-10] * 6 + [-100] * n_features
-    upper_bounds = [10] * 6 + [100] * n_features
+    lower_bounds = [-100] * 6 + [-100] * n_features
+    upper_bounds = [100] * 6 + [100] * n_features
     bounds = [lower_bounds, upper_bounds]
     
     def f_wrapper(beta):
@@ -1935,7 +1935,7 @@ def constrained_sgd_new(f, grad_f,current_point,bounds, X, y, learning_rate=0.01
         if np.linalg.norm(x_new - x) < tol:
             break
 
-        if np.any(x_new < lower_bounds) or np.any(x_new > upper_bounds):
+        if np.all(x_new < lower_bounds) or np.all(x_new > upper_bounds):
             # stepping outside the convex region → stop here
             break
 
@@ -2017,7 +2017,7 @@ def predictive_sgd_optimization_new(f, grad_f, X, y, initial_points, n_points=10
     print("Running predictive SGD with region constraints...")
     enhanced_results = []
     
-    for start_point in test_points:
+    for start_point in initial_points:
         print(f"  - Enhanced optimization from point {start_point}")
         current_point = start_point.copy()
         current_loss = f(current_point, X, y)
@@ -2217,7 +2217,7 @@ def constrained_sgd_with_curvature(f, grad_f, current_point, bounds, X, y,
         lr_t = base_lr / (1.0 + curvature_smooth * curvature)
         x_new = x - lr_t * grad
 
-        if (np.any(x_new < lb) or np.any(x_new > ub)
+        if (np.all(x_new < lb) or np.all(x_new > ub)
             or np.linalg.norm(x_new - x) < tol):
             break
 
@@ -2512,7 +2512,7 @@ def predictive_sgd_optimization_with_curvature_hybrid(
                     signs_o, 10, cur_pt, region_step_size, init_grad
                 )
                 x_de, loss_de = de_search_method_for_hybrid(
-                    f, (lb_o, ub_o), X, y, maxiters=int(10 * non_convex_prob)
+                    f, (lb_o, ub_o), X, y, maxiters=np.max([int(10 * non_convex_prob),max_steps])
                 )
                 cur_pt = x_de
                 enhanced.append((x_de, loss_de))
@@ -2612,10 +2612,14 @@ def constrained_sgd_with_curvature(
         x_new = x - lr_t * grad
 
         # project into [lb, ub]
-        x_new = np.minimum(np.maximum(x_new, lb), ub)
+        # x_new = np.minimum(np.maximum(x_new, lb), ub)
 
         if np.linalg.norm(x_new - x) < tol:
             x = x_new
+            break
+
+        if np.all(x_new < lb) or np.all(x_new > ub):
+            # stepping outside the convex region → stop here
             break
 
         prev_x, prev_grad, x = x, grad, x_new
