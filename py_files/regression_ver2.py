@@ -49,8 +49,8 @@ def california_housing():
 
     X_df = pd.DataFrame(data.data, columns=data.feature_names)
     y_df = pd.DataFrame(data.target, columns=['Target'])
-    X_df = X_df.iloc[0:500]
-    y_df = y_df.iloc[0:500]
+    X_df = X_df.iloc[:500]
+    y_df = y_df.iloc[:500]
 
     california_df = pd.concat([X_df, y_df], axis=1)
 
@@ -137,41 +137,41 @@ def nonconvex_hessian_f(beta, X, y):
 
 
 
-# def nonconvex_f(beta, X, y, c=1.0):
-#     """
-#     Non-convex Cauchy loss.
-#     Uses dot product for multi-dimensional beta.
-#     c: scale parameter controlling the “flatness” of the tails.
-#     """
-#     residual = y - np.dot(X, beta)
-#     residual_sq = residual**2
-#     cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
-#     return cost
+def nonconvex_f(beta, X, y, c=1.0):
+    """
+    Non-convex Cauchy loss.
+    Uses dot product for multi-dimensional beta.
+    c: scale parameter controlling the “flatness” of the tails.
+    """
+    residual = y - np.dot(X, beta)
+    residual_sq = residual**2
+    cost = 0.5 * c**2 * np.sum(np.log(1 + residual_sq / c**2))
+    return cost
 
-# def nonconvex_grad_f(beta, X, y, c=1.0):
-#     """
-#     Gradient of the non-convex Cauchy loss.
-#     Computes the gradient with respect to beta.
-#     """
-#     residual = y - np.dot(X, beta)
-#     residual_sq = residual**2
-#     # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
-#     factor = residual / (1 + residual_sq / c**2)
-#     gradient = -np.dot(X.T, factor)
-#     return gradient
+def nonconvex_grad_f(beta, X, y, c=1.0):
+    """
+    Gradient of the non-convex Cauchy loss.
+    Computes the gradient with respect to beta.
+    """
+    residual = y - np.dot(X, beta)
+    residual_sq = residual**2
+    # d/dr [0.5 c^2 log(1 + r^2/c^2)] = r / (1 + r^2/c^2)
+    factor = residual / (1 + residual_sq / c**2)
+    gradient = -np.dot(X.T, factor)
+    return gradient
 
-# def nonconvex_hessian_f(beta, X, y, c=1.0):
-#     """
-#     Hessian of the non-convex Cauchy loss.
-#     Computes a 2D Hessian matrix.
-#     """
-#     residual = y - np.dot(X, beta)
-#     residual_sq = residual**2
-#     # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
-#     factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
-#     factor = np.asarray(factor)  # <-- 加这一行！
-#     H = np.dot(X.T, X * factor[:, np.newaxis])
-#     return H
+def nonconvex_hessian_f(beta, X, y, c=1.0):
+    """
+    Hessian of the non-convex Cauchy loss.
+    Computes a 2D Hessian matrix.
+    """
+    residual = y - np.dot(X, beta)
+    residual_sq = residual**2
+    # d/dr [r / (1 + r^2/c^2)] = (1 - r^2/c^2) / (1 + r^2/c^2)^2
+    factor = (1 - residual_sq / c**2) / (1 + residual_sq / c**2)**2
+    factor = np.asarray(factor)  # <-- 加这一行！
+    H = np.dot(X.T, X * factor[:, np.newaxis])
+    return H
 
 
 
@@ -2820,6 +2820,8 @@ def generate_random_initial_points(n_points, n_params, lower=-100, upper=100, ra
 # -------------------------------------------------------------------
 # Example usage & comparison loop
 # -------------------------------------------------------------------
+from memory_profiler import memory_usage
+
 def example_usage():
     import time
     import numpy as np
@@ -2866,15 +2868,22 @@ def example_usage():
         print(f"\nRunning {name}...")
         start = time.time()
         try:
-            out = func()
+            mem_usage, out = memory_usage((func,), retval=True, interval=0.1, max_iterations=1)
             if name == "Our Approach (v2)":
                 params, loss, interp = out
             else:
                 params, loss = out[:2]
                 interp = out[2] if len(out) > 2 else None
             elapsed = time.time() - start
-            results[name] = {"success": True, "time": elapsed, "loss": loss, "params": params, "interp": interp}
-            print(f"  - Success: Loss={loss:.6f}, Time={elapsed:.2f}s")
+            results[name] = {
+                "success": True,
+                "time": elapsed,
+                "loss": loss,
+                "params": params,
+                "interp": interp,
+                "memory": max(mem_usage) - min(mem_usage)  # memory used during execution (MB)
+            }
+            print(f"  - Success: Loss={loss:.6f}, Time={elapsed:.2f}s, Memory Usage={results[name]['memory']:.2f} MB")
         except Exception as e:
             elapsed = time.time() - start
             results[name] = {"success": False, "time": elapsed, "error": str(e)}
@@ -2882,11 +2891,63 @@ def example_usage():
 
     # comparison table & best interpretation
     plot_optimization_results(results, None)
+    plot_memory_usage(results)
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_memory_usage(results):
+    """
+    Plot memory usage for each successful optimization method.
+
+    Parameters:
+    - results: Dictionary from example_usage() containing method results,
+               must include 'memory' field for each successful method.
+    """
+
+    # Filter successful methods that have memory data
+    successful_methods = {
+        k: v for k, v in results.items()
+        if v["success"] and "memory" in v
+    }
+
+    if not successful_methods:
+        print("No successful optimization methods with memory usage recorded.")
+        return
+
+    methods = list(successful_methods.keys())
+    memory_usages = [successful_methods[m]["memory"] for m in methods]
+
+    # Create figure
+    plt.figure(figsize=(10, 6))
+    colors = plt.cm.viridis(np.linspace(0, 1, len(methods)))
+
+    bars = plt.bar(methods, memory_usages, color=colors, alpha=0.7)
+    plt.xlabel('Optimization Method')
+    plt.ylabel('Memory Usage (MB)')
+    plt.title('Memory Usage Comparison Across Optimization Methods')
+    plt.xticks(rotation=45, ha='right')
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+
+    # Annotate memory usage values
+    for bar in bars:
+        height = bar.get_height()
+        plt.annotate(f'{height:.2f} MB',
+                     xy=(bar.get_x() + bar.get_width() / 2, height),
+                     xytext=(0, 3), textcoords="offset points",
+                     ha='center', va='bottom')
+
+    plt.tight_layout()
+    plt.savefig('memory_usage_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print("Memory usage plot saved as 'memory_usage_comparison.png'")
 
 
 if __name__ == "__main__":
     # load one of: diabetes, california_housing, regression, friedman1
-    dataset = 'regression'
+    dataset = 'diabetes'
     if dataset == 'diabetes':
         X_train, X_test, y_train, y_test = diabetes()
     elif dataset == 'california_housing':
